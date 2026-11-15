@@ -4,7 +4,7 @@
 
 Creates a dedicated lobby on startup using `server.json`. The host machine requires no gameplay input and does not occupy a player slot. This patch modifies the stock `data.win` via `UndertaleModCli` and [Patch.csx](Patch.csx) and runs on the Windows GameMaker runtime.
 
-> For the **native Linux headless server** that does not require Windows or the GameMaker runtime, see `src/Mma.Server` and the root [README.md](../README.md).
+> For the **cross-platform .NET 10 headless server** (`src/Mma.Server`) — supporting both native **Windows / Windows Server (`win-x64`)** and **Linux (`linux-x64`)** without a GPU, DirectX, audio hardware, or the GameMaker runtime, using the same `server.json` `Mode` / `Players` configuration format — see the root [README.md](../README.md).
 
 ## Build & Setup
 

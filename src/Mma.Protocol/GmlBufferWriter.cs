@@ -54,6 +54,13 @@ public sealed class GmlBufferWriter
         _buffer.Advance(sizeof(uint));
     }
 
+    public void WriteU64(ulong value)
+    {
+        var span = _buffer.GetSpan(sizeof(ulong));
+        BinaryPrimitives.WriteUInt64LittleEndian(span, value);
+        _buffer.Advance(sizeof(ulong));
+    }
+
     /// <summary>
     /// Writes a GameMaker buffer_string (UTF-8 bytes terminated by a single 0x00 byte).
     /// </summary>

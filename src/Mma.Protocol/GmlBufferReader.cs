@@ -52,6 +52,14 @@ public sealed class GmlBufferReader
         return value;
     }
 
+    public ulong ReadU64()
+    {
+        EnsureRemaining(sizeof(ulong));
+        ulong value = BinaryPrimitives.ReadUInt64LittleEndian(_buffer.Span[_offset..]);
+        _offset += sizeof(ulong);
+        return value;
+    }
+
     /// <summary>
     /// Reads a GameMaker buffer_string (NUL-terminated UTF-8 bytes).
     /// </summary>
@@ -67,6 +75,14 @@ public sealed class GmlBufferReader
         string text = Encoding.UTF8.GetString(remaining[..terminatorIndex]);
         _offset += terminatorIndex + 1;
         return text;
+    }
+
+    /// <summary>
+    /// Reads an optional trailing GML string tag if unread bytes remain.
+    /// </summary>
+    public string? TryReadOptionalGmlString()
+    {
+        return Remaining > 0 ? ReadGmlString() : null;
     }
 
     private void EnsureRemaining(int requiredBytes)

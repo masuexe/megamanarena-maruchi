@@ -4,7 +4,7 @@
 
 启动时按 `server.json` 创建房间。开服电脑无需操作游戏，也不占玩家位。服务端通过 `UndertaleModCli` 对原版 `data.win` 应用 [Patch.csx](Patch.csx) 补丁，使用原游戏的 Windows GameMaker 运行时运行。
 
-> 若需要脱离 Windows 桌面和 GameMaker 客户端运行时的**纯原生 Linux 无头服务端**，请使用仓库根目录的 .NET 10 服务端 `src/Mma.Server`（详见根目录 [README.zh-CN.md](../README.zh-CN.md)）。
+> 若需要不依赖 GPU、DirectX、音频设备或 GameMaker 运行时的**跨平台 .NET 10 原生无头服务端**（`src/Mma.Server`，同时支持原生 **Windows / Windows Server (`win-x64`)** 与 **Linux (`linux-x64`)**，并兼容相同的 `server.json` `Mode` / `Players` 配置格式），请见仓库根目录 [README.zh-CN.md](../README.zh-CN.md)。
 
 ## 首次构建与环境准备
 

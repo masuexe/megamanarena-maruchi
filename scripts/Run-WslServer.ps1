@@ -1,10 +1,10 @@
 [CmdletBinding()]
 param(
-    [ValidateRange(1, 65535)]
+    [ValidateRange(1, 65534)]
     [int]$Port = 6520,
     [ValidateRange(2, 64)]
     [int]$MaxPlayers = 8,
-    [ValidateSet('Arena', 'Teams', 'Squads', 'Boss', 'Elevator', 'Stage')]
+    [ValidateSet('Arena', 'Teams', 'Squads', 'Boss', 'Elevator', 'Stage', 'Arena8')]
     [string]$Mode = 'Arena',
     [switch]$Build
 )
