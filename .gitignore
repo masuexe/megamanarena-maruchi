@@ -1,0 +1,34 @@
+# Clean-room protection: never commit original game binaries, patched .win files, or game assets
+/local/
+**/runtime/
+**/runtime-*/
+*.win
+*.exe
+*.dll
+*.dat
+*.sav
+*.nsf
+*.ogg
+*.wav
+*.zip
+*.tar.gz
+*.xdelta
+*.bps
+/Music/
+/SFX/
+*Wallpaper*.jpg
+*Wallpaper*.png
+*-QA.png
+
+# .NET build & IDE artifacts
+**/bin/
+**/obj/
+**/publish/
+*.user
+*.suo
+.vs/
+.idea/
+
+# Logs & temporary files
+*.log
+*.tmp
