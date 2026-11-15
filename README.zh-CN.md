@@ -13,14 +13,15 @@
 
 为避免侵犯原版游戏版权（DMCA），**本仓库严格不跟踪任何原版游戏二进制、资源文件、修补后的 `.win` 文件、原始反编译 GML 转储或打包压缩包**。
 
-所有受版权保护的原版文件、本地构建产物、运行副本及工具均存放在被 `.gitignore` 忽略的 `local/` 目录中：
-- `local/MegaManArena_v5.0.0.zip`：本地自备的 Mega Man Arena 5.0.0 原始发布包（仅保留在本地，绝不提交）。
+所有受版权保护的原版文件及本地生成产物均存放在 `local/` 目录中，**除 [local/README.md](local/README.md) 与 [local/README.zh-CN.md](local/README.zh-CN.md) 外，`local/` 下的全部文件与子目录均被 `.gitignore` 忽略**（这样 `git clone` 后会自动存在带说明文档的 `local/` 目录，同时保证零版权文件入库）：
+- `local/dist/`：可直接发给朋友或上传开服的一键压缩包（`megamanarena-server-win-x64.zip`、`megamanarena-server-linux-x64.tar.gz`、`SHA256SUMS.txt`）。
+- `local/publish/`：未压缩的独立单文件运行目录，按平台分为 `local/publish/win-x64/` 与 `local/publish/linux-x64/`。
+- `local/MegaManArena_v5.0.0.zip`：可选的本地原版 Mega Man Arena 5.0.0 原始发布包（仅在构建 GML 补丁时使用；**仅运行/编译 `Mma.Server` 无需准备**）。
 - `local/game/`：自动解压出的原版干净游戏文件（可通过环境变量 `$env:MMA_GAME_DIR` 指定其他路径）。
 - `local/tools/`：自动下载的 `UndertaleModCli v0.9.2.0`。
 - `local/build/`：GML 补丁编译产出的 `data.server.win`、`data.client8.win`、`data.server8.win`。
 - `local/decompiled/`：本地反编译导出的联机相关 GML 参考文本（通过 `.\scripts\Export-OnlineGml.ps1` 生成）。
 - `local/runtime/`：本地启动测试时的隔离运行目录（`Music` / `SFX` 通过目录联接复用 `local/game/`）。
-- `local/publish/`：发布出的独立单文件服务端分发包，按平台分为 `local/publish/win-x64/` 与 `local/publish/linux-x64/`（含可执行程序、`server.example.json`、`server.json` 与平台启动/防火墙脚本）。
 
 ---
 
@@ -39,7 +40,7 @@ megamanarena-maruchi/
 ├── DedicatedServer/           # 原版 4 人专用服 GML 补丁与启动脚本（Patch.csx）
 ├── Arena8/                    # 8 人 Arena 实验版 GML 补丁与启动脚本（Patch.csx）
 ├── scripts/                   # 环境初始化、GML 导出、跨平台打包、Windows 与 WSL2 启动脚本
-├── local/                     # （已忽略）原版游戏、UTMT 工具、反编译参考、.win 与发布产物
+├── local/                     # 仅跟踪说明文档 README*.md；游戏文件、压缩包与构建产物均被忽略
 └── MegaManArena.Maruchi.sln
 ```
 
@@ -72,20 +73,20 @@ megamanarena-maruchi/
 dotnet test MegaManArena.Maruchi.sln
 ```
 
-### 3. 打包跨平台独立服务端（`win-x64` 与 `linux-x64`）
+### 3. 打包跨平台独立服务端与一键分发压缩包（`win-x64` 与 `linux-x64`）
 
-生成独立单文件（Self-Contained）发布包，目标服务器无需预先安装 .NET 运行时或 SDK：
+生成独立单文件（Self-Contained）运行包及可直接发送的一键压缩包（目标服务器**无需**预装 .NET 运行时、SDK 或原版游戏）：
 
 ```powershell
-# 默认同时发布 win-x64 与 linux-x64
+# 默认同时打包 win-x64 与 linux-x64 并生成压缩包（加 -SkipArchive 可跳过打包压缩包）
 .\scripts\Publish-Server.ps1
 
 # 或仅打包单个平台：
-.\scripts\Publish-WindowsServer.ps1   # 输出到 local/publish/win-x64/
-.\scripts\Publish-LinuxServer.ps1     # 输出到 local/publish/linux-x64/
+.\scripts\Publish-WindowsServer.ps1   # -> local/publish/win-x64/ 与 local/dist/megamanarena-server-win-x64.zip
+.\scripts\Publish-LinuxServer.ps1     # -> local/publish/linux-x64/ 与 local/dist/megamanarena-server-linux-x64.tar.gz
 ```
 
-每个输出目录都会包含单文件服务端程序、`server.example.json`、初始 `server.json`（仅在不存在时生成，避免覆盖已修改配置），以及对应平台的启动和防火墙辅助脚本。
+分发压缩包输出到 `local/dist/`（`megamanarena-server-win-x64.zip`、保留 `0755` 可执行权限的 `megamanarena-server-linux-x64.tar.gz` 及 `SHA256SUMS.txt`）。每个压缩包均包含干净的默认 `server.json`（`local/publish/*/server.json` 仍会保留本机已有修改）、`server.example.json`、快速说明 `README.txt` 及平台启动/防火墙辅助脚本。
 
 ### 4. 本地快速启动验证（Windows / WSL2）
 
@@ -104,17 +105,17 @@ dotnet test MegaManArena.Maruchi.sln
 ## 生产服务器部署指南
 
 ### Windows / Windows Server（`win-x64`）
-1. 将 `local/publish/win-x64/` 目录整体复制到服务器（包含 `Mma.Server.exe`、`server.example.json`、`server.json`、`Start-MmaServer.cmd`、`Open-FirewallPorts.ps1`）。
+1. 将 `local/dist/megamanarena-server-win-x64.zip` 发送并解压到目标服务器（含 `Mma.Server.exe`、`server.example.json`、`server.json`、`Start-MmaServer.cmd`、`Open-FirewallPorts.cmd`、`Open-FirewallPorts.ps1`、`README.txt`）。
 2. 按需编辑 `server.json`（详见下方[配置项与优先级](#配置项与优先级)）。
-3. 使用**管理员权限**的 PowerShell 放行入站 UDP 双端口（`Port` 与 `Port + 1`）：
+3. 放行入站 UDP 双端口（`Port` 与 `Port + 1`）：直接右键 `Open-FirewallPorts.cmd` → **以管理员身份运行**（会自动读取 `server.json` 中的 `Port`，默认放行 `6520` 与 `6521`）；或在管理员 PowerShell 中运行：
    ```powershell
    .\Open-FirewallPorts.ps1 -Port 6520
    ```
-   *（若部署端口为 `6528`/`6529` 的 `Arena8` 服务端，请改为 `-Port 6528`。）*
+   *（若部署端口为 `6528`/`6529` 的 `Arena8` 服务端，请先改 `server.json` 或传入 `-Port 6528`。）*
 4. 运行 `Start-MmaServer.cmd` 或 `.\Mma.Server.exe` 启动（可配合任务计划程序或系统服务托管）。服务端完全不依赖显卡、DirectX、声卡、交互式桌面或 GameMaker 运行时，断开 RDP 后亦可稳定运行。
 
 ### Linux 服务器（`linux-x64`）
-1. 将 `local/publish/linux-x64/` 目录复制到目标主机（包含 `Mma.Server`、`server.example.json`、`server.json`、`start-server.sh`；若复制后丢失执行权限，请先执行 `chmod +x Mma.Server start-server.sh`）。
+1. 将 `local/dist/megamanarena-server-linux-x64.tar.gz` 上传到 Linux 主机并执行 `tar -xzf megamanarena-server-linux-x64.tar.gz` 解压（已保留 `Mma.Server` 与 `start-server.sh` 的 `0755` 可执行权限；若单独拷贝未解压目录，请先执行 `chmod +x Mma.Server start-server.sh`）。
 2. 按需编辑 `server.json`。
 3. 在系统防火墙与云安全组中同时放行 **UDP `Port` 与 `Port + 1`**（例如 `sudo ufw allow 6520:6521/udp`）。
 4. 运行 `./start-server.sh` 或 `./Mma.Server [参数]`；服务端支持 `SIGINT` / `SIGTERM` 优雅退出，适合 `systemd`、`tmux` 或容器部署。

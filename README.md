@@ -13,14 +13,15 @@ This project extends *Mega Man Arena 5.0* with three primary goals:
 
 To respect copyright and prevent DMCA issues, **this repository strictly tracks zero original game binaries, audio/sprite assets, patched `.win` data files, raw decompiled GML dumps, or archives**.
 
-All copyrighted or locally generated artifacts live inside the git-ignored `local/` directory:
-- `local/MegaManArena_v5.0.0.zip`: User-supplied stock Mega Man Arena 5.0.0 archive (kept strictly local).
+All copyrighted or locally generated artifacts live inside `local/`, where **everything except [local/README.md](local/README.md) and [local/README.zh-CN.md](local/README.zh-CN.md) is git-ignored** (Git still creates `local/` on `git clone` so the directory layout is documented cleanly):
+- `local/dist/`: Ready-to-share server archives (`megamanarena-server-win-x64.zip`, `megamanarena-server-linux-x64.tar.gz`, `SHA256SUMS.txt`).
+- `local/publish/`: Unpacked self-contained single-file headless server bundles under `local/publish/win-x64/` and `local/publish/linux-x64/`.
+- `local/MegaManArena_v5.0.0.zip`: Optional user-supplied stock Mega Man Arena 5.0.0 archive (only needed if rebuilding GML patches; **not** needed to build or run `Mma.Server`).
 - `local/game/`: Automatically extracted stock game files (overridable via `$env:MMA_GAME_DIR`).
 - `local/tools/`: Automatically downloaded `UndertaleModCli v0.9.2.0`.
 - `local/build/`: Generated GML patch outputs (`data.server.win`, `data.client8.win`, `data.server8.win`).
 - `local/decompiled/`: Local decompiled GML reference files generated via `.\scripts\Export-OnlineGml.ps1`.
 - `local/runtime/`: Isolated local test runtimes (reusing `Music` / `SFX` via NTFS junctions).
-- `local/publish/`: Self-contained single-file headless server bundles under `local/publish/win-x64/` and `local/publish/linux-x64/` (`Mma.Server.exe` / `Mma.Server`, `server.example.json`, `server.json`, launcher & firewall scripts).
 
 ---
 
@@ -39,7 +40,7 @@ megamanarena-maruchi/
 ├── DedicatedServer/           # Stock 4-player dedicated server GML patch & Windows GM scripts (Patch.csx)
 ├── Arena8/                    # 8-player Arena experimental GML patch & launcher scripts (Patch.csx)
 ├── scripts/                   # Dev setup, GML export, cross-platform publish, Windows & WSL2 runner scripts
-├── local/                     # (git-ignored) Stock game, UTMT CLI, decompiled refs, .win & publish outputs
+├── local/                     # Tracked only with README*.md; all assets, archives & builds are git-ignored
 └── MegaManArena.Maruchi.sln
 ```
 
@@ -72,20 +73,20 @@ To export online-related GML scripts to `local/decompiled/online/` for local ins
 dotnet test MegaManArena.Maruchi.sln
 ```
 
-### 3. Publish Self-Contained Server Bundles (`win-x64` & `linux-x64`)
+### 3. Publish Self-Contained Server Bundles & Distribution Archives (`win-x64` & `linux-x64`)
 
-Publish both **Windows / Windows Server (`win-x64`)** and **Linux (`linux-x64`)** self-contained single-file bundles (the target server needs **no** `.NET SDK` installed):
+Publish both **Windows / Windows Server (`win-x64`)** and **Linux (`linux-x64`)** self-contained single-file bundles and ready-to-share distribution archives (the target server needs **no** `.NET SDK` or stock game files installed):
 
 ```powershell
-# Publish both win-x64 and linux-x64 (default)
+# Publish & archive both win-x64 and linux-x64 (default; pass -SkipArchive for unpacked output only)
 .\scripts\Publish-Server.ps1
 
 # Or target a single platform:
-.\scripts\Publish-WindowsServer.ps1   # -> local/publish/win-x64/
-.\scripts\Publish-LinuxServer.ps1     # -> local/publish/linux-x64/
+.\scripts\Publish-WindowsServer.ps1   # -> local/publish/win-x64/ + local/dist/megamanarena-server-win-x64.zip
+.\scripts\Publish-LinuxServer.ps1     # -> local/publish/linux-x64/ + local/dist/megamanarena-server-linux-x64.tar.gz
 ```
 
-Each output folder contains the single-file server binary, `server.example.json`, an initial `server.json` (generated only if not already present so local edits are preserved), and platform-specific launch / firewall scripts.
+Ready-to-distribute archives are written to `local/dist/` (`megamanarena-server-win-x64.zip`, `megamanarena-server-linux-x64.tar.gz` preserving `0755` executable mode, and `SHA256SUMS.txt`). Each bundle contains the single-file server binary, clean `server.json` (`local/publish/*/server.json` preserves local edits across rebuilds), `server.example.json`, `README.txt`, and platform launch/firewall helpers.
 
 ### 4. Local Smoke Launch (Windows & WSL2)
 
@@ -104,9 +105,9 @@ You can verify UDP reachability with the `"MMA_PING"` probe (expects `"MMA_PONG:
 ## Deploying to Production Servers
 
 ### Windows / Windows Server (`win-x64`)
-1. Copy `local/publish/win-x64/` (`Mma.Server.exe`, `server.example.json`, `server.json`, `Start-MmaServer.cmd`, `Open-FirewallPorts.ps1`) to your Windows host.
+1. Copy or extract `local/dist/megamanarena-server-win-x64.zip` (containing `Mma.Server.exe`, `server.example.json`, `server.json`, `Start-MmaServer.cmd`, `Open-FirewallPorts.cmd`, `Open-FirewallPorts.ps1`, and `README.txt`) to your Windows host.
 2. Edit `server.json` if needed (see [Configuration & Precedence](#configuration--precedence)).
-3. Open inbound UDP firewall ports (`Port` and `Port + 1`) from an **Administrator** PowerShell prompt:
+3. Open inbound UDP firewall ports (`Port` and `Port + 1`): right-click `Open-FirewallPorts.cmd` -> **Run as administrator** (automatically reads `Port` from `server.json`, defaulting to `6520` & `6521`), or from an Administrator PowerShell prompt run:
    ```powershell
    .\Open-FirewallPorts.ps1 -Port 6520
    ```
@@ -114,7 +115,7 @@ You can verify UDP reachability with the `"MMA_PING"` probe (expects `"MMA_PONG:
 4. Double-click `Start-MmaServer.cmd` or run `.\Mma.Server.exe` from PowerShell / Task Scheduler / Windows Service wrapper. No GPU, DirectX, audio hardware, interactive RDP session, or GameMaker runtime is required.
 
 ### Linux (`linux-x64`)
-1. Copy `local/publish/linux-x64/` (`Mma.Server`, `server.example.json`, `server.json`, `start-server.sh`) to your Linux host (`chmod +x Mma.Server start-server.sh` if file permissions were not preserved).
+1. Upload `local/dist/megamanarena-server-linux-x64.tar.gz` and extract with `tar -xzf megamanarena-server-linux-x64.tar.gz` (preserves `0755` executable mode on `Mma.Server` and `start-server.sh`; run `chmod +x Mma.Server start-server.sh` only if transferring unpacked files without mode bits).
 2. Edit `server.json` if needed.
 3. Allow inbound UDP for **both `Port` and `Port + 1`** in your host firewall and cloud security group (e.g. `sudo ufw allow 6520:6521/udp`).
 4. Run `./start-server.sh` (or `./Mma.Server [options]`). The server handles `SIGINT` and `SIGTERM` cleanly for `systemd`, `tmux`, or containers.

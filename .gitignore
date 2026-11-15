@@ -1,5 +1,7 @@
 # Clean-room protection: never commit original game binaries, patched .win files, or game assets
-/local/
+/local/*
+!/local/README.md
+!/local/README.zh-CN.md
 **/runtime/
 **/runtime-*/
 *.win
