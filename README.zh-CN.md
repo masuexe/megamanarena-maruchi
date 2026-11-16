@@ -159,4 +159,4 @@ dotnet test MegaManArena.Maruchi.sln
 
 ## 贡献者与致谢
 
-- **Lin** — 协作者：贡献了全模式 `Arena8` 八人客户端与抗卡顿联机架构（`240` 号包 Deadline Timeline 防冻结帧提交与 `1.5×` 自动追帧同步、全 6 种模式 8 人解锁、桌面工作区自适应 `SCREEN SIZE: FIT` 缩放、原生贴图半倍八人 HUD 与 2×4 大厅准备网格、多地图 `P5..P8` 出生点与镜头复位锚点生成，以及便携版 Windows 客户端整合包设计）。
+- [**Lin** (`@xiouaoxi`)](https://github.com/xiouaoxi) — 协作者：贡献了全模式 `Arena8` 八人客户端与抗卡顿联机架构（`240` 号包 Deadline Timeline 防冻结帧提交与 `1.5×` 自动追帧同步、全 6 种模式 8 人解锁、桌面工作区自适应 `SCREEN SIZE: FIT` 缩放、原生贴图半倍八人 HUD 与 2×4 大厅准备网格、多地图 `P5..P8` 出生点与镜头复位锚点生成，以及便携版 Windows 客户端整合包设计）。

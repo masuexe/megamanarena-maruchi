@@ -4,7 +4,7 @@
 
 Supports **2–8 players** across **all 6 online modes** (`Arena8`, `Teams`, `Squads`, `Boss`, `Elevator`, and `Stage`) with multi-stage `P5..P8` spawns and scrolling-camera anchor recovery. Every player connects using a patched `Arena8` client (`5.0.0.4890-arena8-deadline`), while the host operates without occupying a player slot (via `Mma.Server` or `data.server8.win`).
 
-### Key Features & Collaborator Enhancements (by Lin)
+### Key Features & Collaborator Enhancements (by [Lin](https://github.com/xiouaoxi))
 - **Anti-Stall Deadline Timeline (`5..8` players, Packet `240`)**: Server commits frames at 60 Hz on a deadline (`0` neutral mask when a peer drops packets so healthy players never freeze), repairs recovering peers from a 1,024-frame history ring (including `18s` retired-phase retention across Stage -> Boss transitions), and fast-forwards lagging clients at `1.5×` speed. (`2..4` players seamlessly use standard Packet `0` lockstep.)
 - **All-Mode 8-Player Compatibility**: Unlocks `Teams` (`color/3` + per-team HUD labels), `Squads`, `Boss` (`objMatchControlBoss` 8P + Wily Machine 8P), `Elevator`, and `Stage` co-op for up to 8 players (`teamNumber = 1` co-op alignment & extra `P5..P8` anchors), plus dynamic mode labels in the lobby.
 - **Adaptive Desktop Window Scaling (`SCREEN SIZE: FIT`)**: Automatically scales cleanly at `10:7` within the desktop work area (`Start-Arena8.ps1` `-arena8-work-area=` detection + in-game `Options -> Screen Size: FIT`).
@@ -33,4 +33,4 @@ Outputs are written to the git-ignored `local\build\Arena8\` directory:
 
 ## Scope & Acknowledgements
 
-Uses dedicated ports (`UDP 6528/6529`) and protocol tag `5.0.0.4890-arena8-deadline` so it stays isolated from stock 4-player lobbies (`UDP 6520/6521`). Thanks to collaborator **Lin** for contributing the all-mode 8-player client support, anti-stall Deadline Timeline protocol (`Packet 240`), `FIT` window scaling, native 8P HUD/lobby layout, and multi-stage `P5..P8` spawns.
+Uses dedicated ports (`UDP 6528/6529`) and protocol tag `5.0.0.4890-arena8-deadline` so it stays isolated from stock 4-player lobbies (`UDP 6520/6521`). Thanks to collaborator [**Lin** (`@xiouaoxi`)](https://github.com/xiouaoxi) for contributing the all-mode 8-player client support, anti-stall Deadline Timeline protocol (`Packet 240`), `FIT` window scaling, native 8P HUD/lobby layout, and multi-stage `P5..P8` spawns.
