@@ -50,6 +50,15 @@ Initialize-MmaRuntimeDir `
 $log = Join-Path $runtime ('arena8-' + (Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '.log')
 $arguments = @('-output', ('"' + $log + '"'))
 if ($isClient) {
+    Add-Type -AssemblyName System.Windows.Forms
+    $screen = [Windows.Forms.Screen]::PrimaryScreen
+    if ($screen) {
+        $area = $screen.WorkingArea
+        $border = [Windows.Forms.SystemInformation]::FrameBorderSize
+        $paddingWidth = [Math]::Max(16, 2 * $border.Width + 8)
+        $paddingHeight = [Math]::Max(48, 2 * $border.Height + [Windows.Forms.SystemInformation]::CaptionHeight + 8)
+        $arguments += "-arena8-work-area=$($area.X),$($area.Y),$($area.Width),$($area.Height),$paddingWidth,$paddingHeight"
+    }
     Start-Process -FilePath $exe -WorkingDirectory $runtime -ArgumentList $arguments
     return
 }

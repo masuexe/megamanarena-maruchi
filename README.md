@@ -14,7 +14,7 @@ This project extends *Mega Man Arena 5.0* with three primary goals:
 To respect copyright and prevent DMCA issues, **this repository strictly tracks zero original game binaries, audio/sprite assets, patched `.win` data files, raw decompiled GML dumps, or archives**.
 
 All copyrighted or locally generated artifacts live inside `local/`, where **everything except [local/README.md](local/README.md) and [local/README.zh-CN.md](local/README.zh-CN.md) is git-ignored** (Git still creates `local/` on `git clone` so the directory layout is documented cleanly):
-- `local/dist/`: Ready-to-share server archives (`megamanarena-server-win-x64.zip`, `megamanarena-server-linux-x64.tar.gz`, `SHA256SUMS.txt`).
+- `local/dist/`: Ready-to-share server archives (`megamanarena-server-win-x64.zip`, `megamanarena-server-linux-x64.tar.gz`, `SHA256SUMS.txt`) and optional local Windows client bundle (`MegaManArena-Maruchi-Client-Windows.zip`, strictly private/git-ignored).
 - `local/publish/`: Unpacked self-contained single-file headless server bundles under `local/publish/win-x64/` and `local/publish/linux-x64/`.
 - `local/MegaManArena_v5.0.0.zip`: Optional user-supplied stock Mega Man Arena 5.0.0 archive (only needed if rebuilding GML patches; **not** needed to build or run `Mma.Server`).
 - `local/game/`: Automatically extracted stock game files (overridable via `$env:MMA_GAME_DIR`).
@@ -84,6 +84,9 @@ Publish both **Windows / Windows Server (`win-x64`)** and **Linux (`linux-x64`)*
 # Or target a single platform:
 .\scripts\Publish-WindowsServer.ps1   # -> local/publish/win-x64/ + local/dist/megamanarena-server-win-x64.zip
 .\scripts\Publish-LinuxServer.ps1     # -> local/publish/linux-x64/ + local/dist/megamanarena-server-linux-x64.tar.gz
+
+# Optional: package a portable local Windows client bundle (Stock + Arena8) for private play:
+.\scripts\Package-WindowsClient.ps1   # -> local/dist/MegaManArena-Maruchi-Client-Windows.zip (keep out of public Git!)
 ```
 
 Ready-to-distribute archives are written to `local/dist/` (`megamanarena-server-win-x64.zip`, `megamanarena-server-linux-x64.tar.gz` preserving `0755` executable mode, and `SHA256SUMS.txt`). Each bundle contains the single-file server binary, clean `server.json` (`local/publish/*/server.json` preserves local edits across rebuilds), `server.example.json`, `README.txt`, and platform launch/firewall helpers.
@@ -149,4 +152,11 @@ Settings resolve in four tiers from **lowest to highest precedence**:
 ## Documentation
 
 - **Wire Protocol Specification**: [docs/protocol.md](docs/protocol.md) | [docs/protocol.zh-CN.md](docs/protocol.zh-CN.md)
+- **8-Player Client & Legacy Patch (`Arena8`)**: [Arena8/README.md](Arena8/README.md) | [Arena8/README.zh-CN.md](Arena8/README.zh-CN.md)
 - **Windows GameMaker GML Server Patch** *(legacy 4P patch)*: [DedicatedServer/README.md](DedicatedServer/README.md) | [DedicatedServer/README.zh-CN.md](DedicatedServer/README.zh-CN.md)
+
+---
+
+## Contributors & Acknowledgements
+
+- **Lin** — Collaborator on the `Arena8` 8-player client experience & netcode optimizations (`SCREEN SIZE: FIT` desktop work-area scaling, native half-scale 8-player sprite HUD & 2×4 lobby UI grid, multi-stage `P5..P8` spawn placement & camera recovery, 8-player lockstep input pacing/queue stabilization, and the portable Windows client bundle design).

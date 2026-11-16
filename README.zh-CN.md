@@ -14,7 +14,7 @@
 为避免侵犯原版游戏版权（DMCA），**本仓库严格不跟踪任何原版游戏二进制、资源文件、修补后的 `.win` 文件、原始反编译 GML 转储或打包压缩包**。
 
 所有受版权保护的原版文件及本地生成产物均存放在 `local/` 目录中，**除 [local/README.md](local/README.md) 与 [local/README.zh-CN.md](local/README.zh-CN.md) 外，`local/` 下的全部文件与子目录均被 `.gitignore` 忽略**（这样 `git clone` 后会自动存在带说明文档的 `local/` 目录，同时保证零版权文件入库）：
-- `local/dist/`：可直接发给朋友或上传开服的一键压缩包（`megamanarena-server-win-x64.zip`、`megamanarena-server-linux-x64.tar.gz`、`SHA256SUMS.txt`）。
+- `local/dist/`：可直接发给朋友或上传开服的一键压缩包（`megamanarena-server-win-x64.zip`、`megamanarena-server-linux-x64.tar.gz`、`SHA256SUMS.txt`）以及可选的本地便携客户端整合包（`MegaManArena-Maruchi-Client-Windows.zip`，仅供私人传包、不入库）。
 - `local/publish/`：未压缩的独立单文件运行目录，按平台分为 `local/publish/win-x64/` 与 `local/publish/linux-x64/`。
 - `local/MegaManArena_v5.0.0.zip`：可选的本地原版 Mega Man Arena 5.0.0 原始发布包（仅在构建 GML 补丁时使用；**仅运行/编译 `Mma.Server` 无需准备**）。
 - `local/game/`：自动解压出的原版干净游戏文件（可通过环境变量 `$env:MMA_GAME_DIR` 指定其他路径）。
@@ -84,6 +84,9 @@ dotnet test MegaManArena.Maruchi.sln
 # 或仅打包单个平台：
 .\scripts\Publish-WindowsServer.ps1   # -> local/publish/win-x64/ 与 local/dist/megamanarena-server-win-x64.zip
 .\scripts\Publish-LinuxServer.ps1     # -> local/publish/linux-x64/ 与 local/dist/megamanarena-server-linux-x64.tar.gz
+
+# 可选：打包包含原版与 Arena8 客户端的便携整合包（含原版资产，仅供私下分发，切勿上传公开仓库）：
+.\scripts\Package-WindowsClient.ps1   # -> local/dist/MegaManArena-Maruchi-Client-Windows.zip
 ```
 
 分发压缩包输出到 `local/dist/`（`megamanarena-server-win-x64.zip`、保留 `0755` 可执行权限的 `megamanarena-server-linux-x64.tar.gz` 及 `SHA256SUMS.txt`）。每个压缩包均包含干净的默认 `server.json`（`local/publish/*/server.json` 仍会保留本机已有修改）、`server.example.json`、快速说明 `README.txt` 及平台启动/防火墙辅助脚本。
@@ -149,4 +152,11 @@ dotnet test MegaManArena.Maruchi.sln
 ## 相关文档
 
 - **网络协议规范**：[docs/protocol.md](docs/protocol.md) | [docs/protocol.zh-CN.md](docs/protocol.zh-CN.md)
+- **八人同屏客户端补丁（`Arena8`）**：[Arena8/README.md](Arena8/README.md) | [Arena8/README.zh-CN.md](Arena8/README.zh-CN.md)
 - **Windows GameMaker 原版 GML 专用服补丁** *（旧版 4 人补丁方案）*：[DedicatedServer/README.md](DedicatedServer/README.md) | [DedicatedServer/README.zh-CN.md](DedicatedServer/README.zh-CN.md)
+
+---
+
+## 贡献者与致谢
+
+- **Lin** — 协作者：贡献了 `Arena8` 八人客户端体验与联机优化（桌面工作区自适应 `SCREEN SIZE: FIT` 缩放、原生贴图半倍八人 HUD 与 2×4 大厅准备网格、多地图 `P5..P8` 出生点与镜头复位锚点生成、8 人锁步发包节流与缓冲队列修复，以及便携版 Windows 客户端整合包结构设计）。
