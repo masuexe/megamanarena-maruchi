@@ -106,8 +106,13 @@ public sealed class DualSocketIntegrationTests
             var writer = new GmlBufferWriter();
             new MmaPacketHeader(SessionId, (byte)type).WriteTo(writer);
             writeBody(writer);
+            return SendRawControlAsync(serverControlEp, writer.WrittenMemory.Span, ct);
+        }
+
+        public Task SendRawControlAsync(IPEndPoint serverControlEp, ReadOnlySpan<byte> rawPayload, CancellationToken ct)
+        {
             uint seq = Interlocked.Increment(ref _sendSeq);
-            byte[] framed = GmRudpCodec.EncodeData(seq, writer.WrittenMemory.Span);
+            byte[] framed = GmRudpCodec.EncodeData(seq, rawPayload);
             return ControlUdp.SendAsync(framed, serverControlEp, ct).AsTask();
         }
 
@@ -423,16 +428,21 @@ public sealed class DualSocketIntegrationTests
     }
 
     [Fact]
-    public async Task Arena8_EightPlayers_HandshakeWelcomeFormat_AndRelayFanout()
+    public async Task Arena8_EightPlayers_HandshakeWelcomeFormat_AndDeadlineTimelineCatchUp()
     {
+        var timings = new ServerTimingOptions(
+            StartingMatchTimeout: TimeSpan.FromSeconds(10),
+            MatchStallTimeout: TimeSpan.FromSeconds(15),
+            TickInterval: TimeSpan.FromMilliseconds(16),
+            LobbyHeartbeatInterval: TimeSpan.FromSeconds(3),
+            FreezeRetransmitCooldown: TimeSpan.FromMilliseconds(12));
         var options = new ServerOptions(IPAddress.Loopback, 0, 8, "Arena8", Buffer: 6);
-        using var host = new UdpServerHost(options, TextWriter.Null);
+        using var host = new UdpServerHost(options, TimeProvider.System, timings, TextWriter.Null);
         Assert.Equal(host.BoundPort + 1, host.BoundInputPort);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         Task serverTask = host.RunAsync(cts.Token);
         var serverControl = new IPEndPoint(IPAddress.Loopback, host.BoundPort);
-        var serverInput = new IPEndPoint(IPAddress.Loopback, host.BoundInputPort);
 
         // Stock 4P client trying to connect to Arena8 gets VersionMismatch (1).
         await using (var wrongVer = new TestClientPeer("WrongVer", MmaConstants.StockVersion))
@@ -484,27 +494,73 @@ public sealed class DualSocketIntegrationTests
                 await peers[i].SendControlAsync(serverControl, MmaPacketType.GotoLevel, new MatchReadyPacket((byte)(i + 1), "rmWilyBoss").WritePayload, cts.Token);
             }
 
+            GotoLevelPacket? firstGoto = null;
             for (int i = 0; i < 8; i++)
             {
                 var gotoLevel = await peers[i].ExpectGotoLevelAsync(cts.Token);
+                firstGoto ??= gotoLevel;
                 Assert.Equal("rmWilyBoss", gotoLevel.Stage);
+                Assert.Equal(firstGoto.RandomSeed, gotoLevel.RandomSeed);
             }
 
             Assert.Equal(LobbyPhase.InMatch, host.Engine.Phase);
+            uint token = (uint)(firstGoto!.RandomSeed % 4294967296UL);
 
-            // Player 1 sends fast input on Port+1 -> all 7 other players P2..P8 receive it without ClientMatchFrame!
-            var inWriter = new GmlBufferWriter();
-            new ClientInputPacket(1, 200, [new InputFrameEntry(206, 0xCAFEBABEU)]).WriteToFastInput(inWriter);
-            await peers[0].InputUdp.SendAsync(inWriter.WrittenMemory, serverInput, cts.Token);
-
-            for (int i = 1; i < 8; i++)
+            // P1..P7 send Packet 240 deadline proposals up to frame 15; P8 stays silent to simulate severe packet loss!
+            var entries = Enumerable.Range(9, 7)
+                .Select(f => new InputFrameEntry((uint)f, f == 9 ? 0xCAFEBABEu : 1u))
+                .ToArray();
+            for (int i = 0; i < 7; i++)
             {
-                var (type, body) = await peers[i].ReceiveFastInputAsync(cts.Token);
-                Assert.Equal(MmaPacketType.Input, type);
-                var relay = RelayInputPacket.ReadBody(new GmlBufferReader(body));
-                Assert.Equal(1, relay.Slot);
-                Assert.Equal([new InputFrameEntry(206, 0xCAFEBABEU)], relay.Frames);
+                var w = new GmlBufferWriter();
+                var slotEntries = i == 0 ? entries : [.. entries.Select(e => e with { Bitmask = (uint)(i + 1) })];
+                new DeadlineProposalPacket(token, 1, 6, slotEntries).WriteTo(w, peers[i].SessionId);
+                await peers[i].SendRawControlAsync(serverControl, w.WrittenMemory.Span, cts.Token);
             }
+
+            // Active P1 receives Packet 240 committed batch containing frame 9 with P1=0xCAFEBABE and silent P8=0 without freezing!
+            DeadlineFrameSnapshot? frame9 = null;
+            while (frame9 is null)
+            {
+                await peers[0].ReadUntilControlAsync(MmaPacketType.DeadlineTimeline, body =>
+                {
+                    Assert.True(DeadlineBatchPacket.TryReadBody(body, 8, out DeadlineBatchPacket? batch));
+                    Assert.NotNull(batch);
+                    Assert.Equal(token, batch.Token);
+                    Assert.Equal((ushort)1, batch.Phase);
+                    foreach (DeadlineFrameSnapshot snap in batch.Frames)
+                    {
+                        if (snap.FrameId == 9u)
+                        {
+                            frame9 = snap;
+                            break;
+                        }
+                    }
+                }, cts.Token);
+            }
+
+            Assert.Equal(0xCAFEBABEu, frame9.Value.PlayerMasks[0]);
+            Assert.Equal(2u, frame9.Value.PlayerMasks[1]);
+            Assert.Equal(0u, frame9.Value.PlayerMasks[7]);
+
+            // Lagged P8 eventually sends Packet 240 proposal with AckFrame=6 -> receives repair batch covering [7..8]!
+            var p8Writer = new GmlBufferWriter();
+            new DeadlineProposalPacket(token, 1, 6, [new InputFrameEntry(16, 0x55u)]).WriteTo(p8Writer, peers[7].SessionId);
+            await peers[7].SendRawControlAsync(serverControl, p8Writer.WrittenMemory.Span, cts.Token);
+
+            bool p8Recovered = false;
+            while (!p8Recovered)
+            {
+                await peers[7].ReadUntilControlAsync(MmaPacketType.DeadlineTimeline, body =>
+                {
+                    Assert.True(DeadlineBatchPacket.TryReadBody(body, 8, out DeadlineBatchPacket? batch));
+                    if (batch!.Frames.Any(f => f.FrameId == 9u && f.PlayerMasks[0] == 0xCAFEBABEu))
+                    {
+                        p8Recovered = true;
+                    }
+                }, cts.Token);
+            }
+            Assert.True(p8Recovered);
         }
         finally
         {
@@ -516,6 +572,57 @@ public sealed class DualSocketIntegrationTests
                 }
             }
         }
+
+        cts.Cancel();
+        await serverTask;
+    }
+
+    [Fact]
+    public async Task Arena8_ThreePlayersInEightSlotRoom_UsesStandardRelayFallback()
+    {
+        var options = new ServerOptions(IPAddress.Loopback, 0, 8, "Arena8", Buffer: 6);
+        using var host = new UdpServerHost(options, TextWriter.Null);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        Task serverTask = host.RunAsync(cts.Token);
+        var serverControl = new IPEndPoint(IPAddress.Loopback, host.BoundPort);
+        var serverInput = new IPEndPoint(IPAddress.Loopback, host.BoundInputPort);
+
+        await using var p1 = new TestClientPeer("P1", MmaConstants.Arena8Version, color: 0);
+        await using var p2 = new TestClientPeer("P2", MmaConstants.Arena8Version, color: 1);
+        await using var p3 = new TestClientPeer("P3", MmaConstants.Arena8Version, color: 2);
+
+        await p1.ConnectAndJoinAckAsync(serverControl, true, cts.Token);
+        await p1.ReadJoinSyncThroughNewPlayerDataAsync(MmaConstants.OnlineModeArena, MmaConstants.SubmodeArena, cts.Token);
+        await p2.ConnectAndJoinAckAsync(serverControl, true, cts.Token);
+        await p2.ReadJoinSyncThroughNewPlayerDataAsync(MmaConstants.OnlineModeArena, MmaConstants.SubmodeArena, cts.Token);
+        await p3.ConnectAndJoinAckAsync(serverControl, true, cts.Token);
+        await p3.ReadJoinSyncThroughNewPlayerDataAsync(MmaConstants.OnlineModeArena, MmaConstants.SubmodeArena, cts.Token);
+        await p1.ReadUntilControlAsync(MmaPacketType.NewPlayerData, null, cts.Token);
+        await p1.ReadUntilControlAsync(MmaPacketType.NewPlayerData, null, cts.Token);
+        await p2.ReadUntilControlAsync(MmaPacketType.NewPlayerData, null, cts.Token);
+
+        await p1.SendControlAsync(serverControl, MmaPacketType.PlayerReady, new ClientReadyPacket(1).WritePayload, cts.Token);
+        await p2.SendControlAsync(serverControl, MmaPacketType.PlayerReady, new ClientReadyPacket(2).WritePayload, cts.Token);
+        await p3.SendControlAsync(serverControl, MmaPacketType.PlayerReady, new ClientReadyPacket(3).WritePayload, cts.Token);
+
+        await p1.SendControlAsync(serverControl, MmaPacketType.GotoLevel, new MatchReadyPacket(1, "rmWilyBoss").WritePayload, cts.Token);
+        await p2.SendControlAsync(serverControl, MmaPacketType.GotoLevel, new MatchReadyPacket(2, "rmWilyBoss").WritePayload, cts.Token);
+        await p3.SendControlAsync(serverControl, MmaPacketType.GotoLevel, new MatchReadyPacket(3, "rmWilyBoss").WritePayload, cts.Token);
+        _ = await p1.ExpectGotoLevelAsync(cts.Token);
+        _ = await p2.ExpectGotoLevelAsync(cts.Token);
+        _ = await p3.ExpectGotoLevelAsync(cts.Token);
+        Assert.Equal(LobbyPhase.InMatch, host.Engine.Phase);
+
+        var inWriter = new GmlBufferWriter();
+        new ClientInputPacket(1, 200, [new InputFrameEntry(206, 0xCAFEBABEU)]).WriteToFastInput(inWriter);
+        await p1.InputUdp.SendAsync(inWriter.WrittenMemory, serverInput, cts.Token);
+
+        var (type2, body2) = await p2.ReceiveFastInputAsync(cts.Token);
+        var (type3, body3) = await p3.ReceiveFastInputAsync(cts.Token);
+        Assert.Equal(MmaPacketType.Input, type2);
+        Assert.Equal(MmaPacketType.Input, type3);
+        Assert.Equal(0xCAFEBABEu, RelayInputPacket.ReadBody(new GmlBufferReader(body2)).Frames[0].Bitmask);
+        Assert.Equal(0xCAFEBABEu, RelayInputPacket.ReadBody(new GmlBufferReader(body3)).Frames[0].Bitmask);
 
         cts.Cancel();
         await serverTask;

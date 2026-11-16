@@ -40,17 +40,41 @@ string Slots(string code) => code
     .Replace("[[], [], [], []]", "[[], [], [], [], [], [], [], []]");
 
 Edit("gml_GlobalScript_getVersionString", code =>
-    Replace(code, "string(global.alphaVersion);", "string(global.alphaVersion) + \"-arena8\";"));
+    Replace(code, "string(global.alphaVersion);", "string(global.alphaVersion) + \"-arena8-deadline\";"));
 
 Edit("gml_GlobalScript_drawHeadIcons", code =>
     Replace(code,
         "    if (argument_count == 0)\n    {\n        var charRef = assetRef(charSelected);\n        var imageScale = global.resolutionFactor;",
         "    if (argument_count <= 1)\n    {\n        var charRef = assetRef(charSelected);\n        var imageScale = (argument_count == 1) ? argument[0] : global.resolutionFactor;"));
 
+Edit("gml_GlobalScript_drawStockCount", code =>
+    Replace(code,
+        "    var imageScale = global.resolutionFactor;",
+        "    var imageScale = (argument_count == 1) ? argument[0] : global.resolutionFactor;"));
+
+Edit("gml_GlobalScript_getOnlineInputs", code =>
+    Replace(code, "    var _entry = -4;", @"    var _entry = -4;
+    if (global.arena8Enabled)
+    {
+        if (argument[0] < 1 || argument[0] > global.onlinePlayerCount)
+        {
+            return false;
+        }
+        var frame = (global.onlineMatchFrame - global.onlineBuffer) + 1 + _frameOffset;
+        var masks = global.arena8Frame(frame);
+        if (is_undefined(masks))
+        {
+            return false;
+        }
+        readInputsBitmask(masks[argument[0] - 1]);
+        return true;
+    }"));
+
 Edit("gml_GlobalScript_globalSetDefaultOptions", code =>
 {
     code = Replace(code, "global.serverPort = 6520;", "global.serverPort = 6528;");
     code = Replace(code, "    global.windowScale = 2;", "    global.windowScale = 3;");
+    code = Replace(code, "    global.maxOnlinePlayerCount = 4;", "    global.maxOnlinePlayerCount = 8;");
     return Replace(code, @"    window_set_size(global.xResolution * global.windowScale, global.yResolution * global.windowScale);
     global.windowResetPositionX = 150;
     global.windowResetPositionY = 50;
@@ -128,59 +152,452 @@ Edit("gml_Object_objMenuText_Draw_0", code =>
         "draw_text(drawX, drawY + 105, string_hash_to_newline(\"SCREEN SIZE: \" + string(global.windowScale) + \"X\"));",
         "draw_text(drawX, drawY + 105, string_hash_to_newline(\"SCREEN SIZE: \" + ((global.windowScale == 3) ? \"FIT\" : (string(global.windowScale) + \"X\"))));"));
 
-foreach (string ctrlName in new[] { "gml_Object_objMatchControlBoss_Create_0", "gml_Object_objVictoryControl_Create_0" })
-{
-    Edit(ctrlName, code =>
-        Replace(code,
-            "window_set_size(global.xResolution * global.windowScale, global.yResolution * global.windowScale);",
-            "global.arena8ResizeWindow(global.windowScale, false);"));
-}
-
-Edit("gml_GlobalScript_initOnlineVariables", code => Slots(code)
-    .Replace("global.onlinePingAlarmSet[5] = false;\n    global.onlinePingAlarmSet[6] = false;",
-        "global.onlinePingAlarmSet = array_create(9, false);\n    global.arena8NextInputSend = 0;"));
-Edit("gml_GlobalScript_cleanOnlineVariables", Slots);
+Edit("gml_Object_objVictoryControl_Create_0", code =>
+    Replace(code,
+        "window_set_size(global.xResolution * global.windowScale, global.yResolution * global.windowScale);",
+        "global.arena8ResizeWindow(global.windowScale, false);"));
 
 Edit("gml_GlobalScript_hasCurrentInput", code =>
     Replace(code,
-        "if (global.onlineFreezeWithoutLockin && arg0 != global.onlinePlayerPort)",
-        "if (global.onlineFreezeWithoutLockin && arg0 != global.onlinePlayerPort && (global.onlinePlayerCount <= 4 || global.rollbackEnabled))"));
+        "    global.rollbackInputUnconfirmed[arg0] = false;",
+        @"    global.rollbackInputUnconfirmed[arg0] = false;
+    if (global.arena8Enabled)
+    {
+        return !is_undefined(global.arena8Frame((global.onlineMatchFrame - global.onlineBuffer) + 1));
+    }"));
 
-Edit("gml_GlobalScript_receiveInputsFromClient", code =>
+Edit("gml_GlobalScript_initOnlineVariables", code =>
 {
-    code = Replace(code,
-        "        var _keepWindow = (global.onlineBuffer * 2) + 2;",
-        @"        var arena8Lockstep = global.onlinePlayerCount > 4 && !global.rollbackEnabled;
-        var _keepWindow = arena8Lockstep ? 32 : ((global.onlineBuffer * 2) + 2);
-        var aheadWindow = arena8Lockstep ? 48 : 1000;");
-    code = Replace(code,
-        "if (_received_frame_ID < (global.onlineMatchFrame - _keepWindow) || _received_frame_ID > (global.onlineMatchFrame + 1000))",
-        "if (_received_frame_ID < (global.onlineMatchFrame - _keepWindow) || _received_frame_ID > (global.onlineMatchFrame + aheadWindow))");
-    return Replace(code,
-        "                    _needFrame = false;\n                    if (_current_frame_inputs[1] != _received_inputs)",
-        "                    _needFrame = false;\n                    if (arena8Lockstep)\n                    {\n                        break;\n                    }\n                    if (_current_frame_inputs[1] != _received_inputs)");
+    code = Slots(code)
+        .Replace("global.onlinePingAlarmSet[5] = false;\n    global.onlinePingAlarmSet[6] = false;",
+            "global.onlinePingAlarmSet = array_create(9, false);");
+    return Replace(code, "    show_debug_message(\"initOnlineVariables run!\");", @"    show_debug_message(""initOnlineVariables run!"");
+    global.arena8Enabled = false;
+    global.arena8Token = 0;
+    global.arena8Phase = 0;
+    global.arena8HistorySize = 1024;
+    global.arena8QueueSize = 128;
+    global.arena8FastSpeed = 0;
+    global.arena8CleanLobby = false;
+    global.arena8Retired = undefined;
+
+    global.arena8RestoreSpeed = function()
+    {
+        if (global.arena8FastSpeed == 0)
+        {
+            exit;
+        }
+        game_set_speed(global.arena8FastSpeed, 0);
+        global.arena8FastSpeed = 0;
+    };
+
+    global.arena8RetirePhase = function()
+    {
+        if (!global.arena8Enabled || !global.onlineIsHost)
+        {
+            exit;
+        }
+        global.arena8Retired =
+        {
+            token: global.arena8Token,
+            phase: global.arena8Phase,
+            count: global.onlinePlayerCount,
+            start: global.onlineBuffer + 1,
+            last: global.arena8Committed,
+            frames: global.arena8Frames,
+            expires: current_time + 18000
+        };
+    };
+
+    global.arena8BeginPhase = function()
+    {
+        global.arena8RestoreSpeed();
+        global.arena8RetirePhase();
+        global.arena8Phase++;
+        global.arena8Frames = array_create(global.arena8HistorySize, undefined);
+        global.arena8Pending = array_create(global.arena8QueueSize, undefined);
+        global.arena8Committed = global.onlineBuffer;
+        global.arena8Contiguous = global.onlineBuffer;
+        global.arena8Neutral = array_create(global.onlinePlayerCount, 0);
+        global.arena8Ack = array_create(global.onlinePlayerCount, global.onlineBuffer);
+        global.arena8ConfirmLead = max(2, ceil(global.onlineBuffer / 3));
+        global.arena8NextUpload = 0;
+        global.arena8NewestUpload = global.onlineBuffer;
+        global.arena8NextBroadcast = 0;
+        global.arena8LastPacket = current_time;
+        global.arena8Enabled = true;
+        if (global.onlineIsHost)
+        {
+            global.arena8CleanLobby = true;
+        }
+    };
+
+    global.arena8Frame = function(arg0)
+    {
+        if (arg0 <= global.onlineBuffer)
+        {
+            return global.arena8Neutral;
+        }
+        var row = global.arena8Frames[arg0 % global.arena8HistorySize];
+        if (is_undefined(row) || row.frame != arg0)
+        {
+            return undefined;
+        }
+        return row.masks;
+    };
+
+    global.arena8Header = function(arg0, arg1, arg2)
+    {
+        buffer_write(arg0, 3, global.onlineSessionID);
+        buffer_write(arg0, 1, 240);
+        buffer_write(arg0, 5, arg1);
+        buffer_write(arg0, 3, arg2);
+    };
+
+    global.arena8ReadHeader = function(arg0, arg1)
+    {
+        if (!global.arena8Enabled || arg1 < 14)
+        {
+            return false;
+        }
+        return buffer_read(arg0, 5) == global.arena8Token && buffer_read(arg0, 3) == global.arena8Phase;
+    };
+
+    global.arena8Sample = function(arg0)
+    {
+        var lead = max(3, ceil(global.onlineBuffer / 2));
+        var frame = max(global.onlineMatchFrame, global.arena8Committed + lead);
+        if (frame <= global.arena8NewestUpload)
+        {
+            exit;
+        }
+        global.arena8NewestUpload = frame;
+        global.arena8Pending[frame % global.arena8QueueSize] =
+        {
+            frame: frame,
+            mask: arg0
+        };
+    };
+
+    global.arena8Upload = function()
+    {
+        if (global.onlineIsHost || global.onlinePlayerPort < 1 || global.clientSocket < 0 || current_time < global.arena8NextUpload)
+        {
+            exit;
+        }
+        global.arena8NextUpload = current_time + 12;
+        var packet = buffer_create(160, 0, 1);
+        global.arena8Header(packet, global.arena8Token, global.arena8Phase);
+        buffer_write(packet, 5, global.arena8Contiguous);
+        buffer_write(packet, 1, 0);
+        var count = 0;
+        var frame = max(global.arena8Committed + 1, global.arena8NewestUpload - 15);
+        while (frame <= global.arena8NewestUpload)
+        {
+            var row = global.arena8Pending[frame % global.arena8QueueSize];
+            if (is_undefined(row) || row.frame != frame)
+            {
+            }
+            else
+            {
+                buffer_write(packet, 5, frame);
+                buffer_write(packet, 5, row.mask);
+                count++;
+            }
+            frame++;
+        }
+        var bytes = buffer_tell(packet);
+        buffer_poke(packet, 13, 1, count);
+        network_send_udp(global.clientSocket, global.onlineServerIP, global.onlineServerPort, packet, bytes);
+        buffer_delete(packet);
+    };
+
+    global.arena8ReceiveProposals = function(arg0, arg1, arg2)
+    {
+        if (arg1 < 14)
+        {
+            exit;
+        }
+        var token = buffer_read(arg0, 5);
+        var phase = buffer_read(arg0, 3);
+        var ack = buffer_read(arg0, 5);
+        var count = buffer_read(arg0, 1);
+        if (count > 16 || arg1 != (14 + (count * 8)))
+        {
+            exit;
+        }
+        if (!global.arena8Enabled || token != global.arena8Token || phase != global.arena8Phase)
+        {
+            var retired = global.arena8Retired;
+            if (is_undefined(retired) || current_time >= retired.expires || retired.token != token || retired.phase != phase || ack > retired.last)
+            {
+                exit;
+            }
+            var first = max(retired.start, (retired.last - global.arena8HistorySize) + 1, ack + 1);
+            var reply = global.arena8Batch(retired, first, min(first + 19, retired.last));
+            network_send_udp(global.serverSocket, ds_list_find_value(global.clientIPList, arg2 - 1), ds_list_find_value(global.clientPortList, arg2 - 1), reply, buffer_tell(reply));
+            buffer_delete(reply);
+            exit;
+        }
+        if (global.arena8Departed[arg2] || ack > global.arena8Committed)
+        {
+            exit;
+        }
+        global.mmaDedicatedActivity[arg2] = current_time;
+        global.arena8Ack[arg2 - 1] = max(global.arena8Ack[arg2 - 1], ack);
+        for (var i = 0; i < count; i++)
+        {
+            var frame = buffer_read(arg0, 5);
+            var mask = buffer_read(arg0, 5);
+            if (frame <= global.arena8Committed || frame > (global.onlineMatchFrame + 64))
+            {
+                continue;
+            }
+            var index = frame % global.arena8QueueSize;
+            var row = global.arena8Pending[index];
+            if (is_undefined(row) || row.frame != frame)
+            {
+                row =
+                {
+                    frame: frame,
+                    masks: array_create(global.onlinePlayerCount, -1)
+                };
+                global.arena8Pending[index] = row;
+            }
+            if (row.masks[arg2 - 1] == -1)
+            {
+                row.masks[arg2 - 1] = mask;
+            }
+        }
+    };
+
+    global.arena8Batch = function(arg0, arg1, arg2)
+    {
+        var count = max(0, (arg2 - arg1) + 1);
+        var packet = buffer_create(14 + (count * (4 + (arg0.count * 4))), 0, 1);
+        global.arena8Header(packet, arg0.token, arg0.phase);
+        buffer_write(packet, 5, arg0.last);
+        buffer_write(packet, 1, count);
+        for (var frame = arg1; frame <= arg2; frame++)
+        {
+            buffer_write(packet, 5, frame);
+            var row = arg0.frames[frame % global.arena8HistorySize];
+            var masks = row.masks;
+            for (var slot = 0; slot < arg0.count; slot++)
+            {
+                buffer_write(packet, 5, masks[slot]);
+            }
+        }
+        return packet;
+    };
+
+    global.arena8ServerTick = function()
+    {
+        var target = (global.onlineMatchFrame - global.onlineBuffer) + 1 + global.arena8ConfirmLead;
+        var advanced = target > global.arena8Committed;
+        while (global.arena8Committed < target)
+        {
+            var frame = ++global.arena8Committed;
+            var row = global.arena8Pending[frame % global.arena8QueueSize];
+            var masks = array_create(global.onlinePlayerCount, 0);
+            if (!is_undefined(row) && row.frame == frame)
+            {
+                for (var slot = 0; slot < global.onlinePlayerCount; slot++)
+                {
+                    if (row.masks[slot] != -1 && !global.arena8Departed[slot + 1])
+                    {
+                        masks[slot] = row.masks[slot];
+                    }
+                }
+            }
+            global.arena8Frames[frame % global.arena8HistorySize] =
+            {
+                frame: frame,
+                masks: masks
+            };
+        }
+        if (!advanced && current_time < global.arena8NextBroadcast)
+        {
+            exit;
+        }
+        global.arena8NextBroadcast = current_time + 200;
+        var last = global.arena8Committed;
+        var recent = max(global.onlineBuffer + 1, last - 7);
+        var oldest = max(global.onlineBuffer + 1, (last - global.arena8HistorySize) + 1);
+        var timeline =
+        {
+            token: global.arena8Token,
+            phase: global.arena8Phase,
+            count: global.onlinePlayerCount,
+            last: last,
+            frames: global.arena8Frames
+        };
+        var packet = global.arena8Batch(timeline, recent, last);
+        for (var peer = 0; peer < global.onlinePlayerCount; peer++)
+        {
+            if (global.arena8Departed[peer + 1])
+            {
+                continue;
+            }
+            var ip = ds_list_find_value(global.clientIPList, peer);
+            var port = ds_list_find_value(global.clientPortList, peer);
+            network_send_udp(global.serverSocket, ip, port, packet, buffer_tell(packet));
+            var next = global.arena8Ack[peer] + 1;
+            if (next >= oldest && next < recent)
+            {
+                var repair = global.arena8Batch(timeline, next, min(next + 19, recent - 1));
+                network_send_udp(global.serverSocket, ip, port, repair, buffer_tell(repair));
+                buffer_delete(repair);
+            }
+        }
+        buffer_delete(packet);
+    };
+
+    global.arena8ReceiveFrames = function(arg0, arg1)
+    {
+        if (!global.arena8ReadHeader(arg0, arg1))
+        {
+            exit;
+        }
+        var highest = buffer_read(arg0, 5);
+        var count = buffer_read(arg0, 1);
+        if (count > 20 || arg1 != (14 + (count * (4 + (global.onlinePlayerCount * 4)))))
+        {
+            exit;
+        }
+        var oldest = max(global.onlineBuffer + 1, (highest - global.arena8HistorySize) + 1);
+        var needed = max(global.onlineBuffer + 1, (global.onlineMatchFrame - global.onlineBuffer) + 1);
+        if (min(global.arena8Contiguous + 1, needed) < oldest)
+        {
+            show_debug_message(""Arena8: connection fell behind the retained frame history"");
+            onlineDisconnect();
+            exit;
+        }
+        global.arena8LastPacket = current_time;
+        global.arena8Committed = max(global.arena8Committed, highest);
+        for (var i = 0; i < count; i++)
+        {
+            var frame = buffer_read(arg0, 5);
+            var masks = array_create(global.onlinePlayerCount, 0);
+            for (var slot = 0; slot < global.onlinePlayerCount; slot++)
+            {
+                masks[slot] = buffer_read(arg0, 5);
+            }
+            if (frame >= needed && frame <= highest)
+            {
+                global.arena8Frames[frame % global.arena8HistorySize] =
+                {
+                    frame: frame,
+                    masks: masks
+                };
+            }
+        }
+        while (global.arena8Contiguous < global.arena8Committed && !is_undefined(global.arena8Frame(global.arena8Contiguous + 1)))
+        {
+            global.arena8Contiguous++;
+        }
+    };
+
+    global.arena8ClientTick = function()
+    {
+        if ((current_time - global.arena8LastPacket) > 18000)
+        {
+            show_debug_message(""Arena8: server input stream timed out"");
+            onlineDisconnect();
+            exit;
+        }
+        var queued = global.arena8Contiguous - ((global.onlineMatchFrame - global.onlineBuffer) + 1);
+        if (queued > (global.onlineBuffer + 8) && global.matchStarted && !global.onlinePaused && !global.winnerDecided)
+        {
+            if (global.arena8FastSpeed == 0)
+            {
+                global.arena8FastSpeed = game_get_speed(0);
+                game_set_speed(round(global.arena8FastSpeed * 1.5), 0);
+            }
+        }
+        else
+        {
+            global.arena8RestoreSpeed();
+        }
+    };");
+});
+
+Edit("gml_GlobalScript_cleanOnlineVariables", code =>
+{
+    code = Slots(code);
+    return Replace(code, "    initOnlineVariables();", @"    if (variable_global_exists(""arena8RestoreSpeed""))
+    {
+        global.arena8RestoreSpeed();
+    }
+    initOnlineVariables();");
 });
 
 Edit("gml_GlobalScript_removeUnnecessaryInputs", code =>
-{
-    code = Replace(code,
-        "    var keepWindow = (global.onlineBuffer * 2) + 2;",
-        "    var keepWindow = (global.onlinePlayerCount > 4 && !global.rollbackEnabled) ? 32 : ((global.onlineBuffer * 2) + 2);");
-    return Replace(code,
+    Replace(code,
         "        for (var _n = 0; _n < ds_list_size(global.onlineInputs[_q]); _n++)",
-        "        for (var _n = 0; _n < ds_list_size(global.onlineInputConfirm[_q]); _n++)");
+        "        for (var _n = 0; _n < ds_list_size(global.onlineInputConfirm[_q]); _n++)"));
+
+Edit("gml_GlobalScript_mapControls", code =>
+{
+    const string target = @"            if (!global.onlineObserver)
+            {
+                var alreadyHasInput = false;
+                var list = global.onlineInputs[global.onlinePlayerPort];
+                var listSize = ds_list_size(list);
+                var i = listSize - 1;
+                while (i >= 0)
+                {
+                    var listEntry = ds_list_find_value(list, i);
+                    if (listEntry[0] == global.onlineMatchFrame)
+                    {
+                        alreadyHasInput = true;
+                        break;
+                    }
+                    i--;
+                }
+                if (alreadyHasInput == false)
+                {
+                    ds_list_add(global.onlineInputs[global.onlinePlayerPort], getInputsArray());
+                }";
+    return Replace(code, target, @"            if (!global.onlineObserver)
+            {
+                if (global.arena8Enabled)
+                {
+                    global.arena8Sample(getInputsBitmask());
+                }
+                else
+                {
+                    var alreadyHasInput = false;
+                    var list = global.onlineInputs[global.onlinePlayerPort];
+                    var listSize = ds_list_size(list);
+                    var i = listSize - 1;
+                    while (i >= 0)
+                    {
+                        var listEntry = ds_list_find_value(list, i);
+                        if (listEntry[0] == global.onlineMatchFrame)
+                        {
+                            alreadyHasInput = true;
+                            break;
+                        }
+                        i--;
+                    }
+                    if (alreadyHasInput == false)
+                    {
+                        ds_list_add(global.onlineInputs[global.onlinePlayerPort], getInputsArray());
+                    }
+                }");
 });
 
 Edit("gml_GlobalScript_sendInputs", code =>
     Replace(code, "function sendInputs()\n{", @"function sendInputs()
 {
-    if (argument[0] == ""server"" && global.onlinePlayerCount > 4 && !global.rollbackEnabled && global.matchStarted)
+    if (global.arena8Enabled)
     {
-        if (current_time < global.arena8NextInputSend)
+        if (argument[0] == ""server"")
         {
-            exit;
+            global.arena8Upload();
         }
-        global.arena8NextInputSend = current_time + 12;
+        exit;
     }"));
 
 if (dedicated)
@@ -211,13 +628,25 @@ function sendDataToNewPlayer(arg0, arg1, arg2, arg3)
     buffer_delete(message);
 }");
 }
+
 Edit("gml_Object_objOnlineLobbyCountdown_Step_0", code => Slots(code)
     .Replace("gotoStage(global.stageSelected);",
         "if (global.online && global.onlinePlayerCount > 4) global.isReplayEnabled = false;\n            gotoStage(global.stageSelected);"));
 Edit("gml_Object_objMatchControl_Other_17", Slots);
+Edit("gml_Object_objBossControlWilyMachine1_Other_13", code =>
+    Replace(code,
+        "                if (phaseTimer == 480)\n                {\n                    for (var i = 1; i <= 4; i++)",
+        "                if (phaseTimer == 480)\n                {\n                    for (var i = 1; i <= (global.online ? global.onlinePlayerCount : 4); i++)"));
+
 Edit("gml_Object_objOnlineControl_Create_0", code => code
     .Replace("i <= 6", "i <= 8")
     .Replace("if (global.onlinePingAlarmSet[i] == true)", "if (i <= 4 && global.onlinePingAlarmSet[i])"));
+
+Edit("gml_Object_objOnlineControl_Draw_73", code => @"if (global.arena8Enabled)
+{
+    global.arena8Upload();
+}
+" + code);
 
 Edit("gml_Object_objOnlineControl_Step_0", code =>
 {
@@ -225,9 +654,27 @@ Edit("gml_Object_objOnlineControl_Step_0", code =>
     int start = code.IndexOf(startMarker);
     int end = code.IndexOf("\n}\nfor (var p", start);
     if (start < 0 || end < 0) throw new InvalidOperationException("Active player block missing");
-    return code.Remove(start, end - start).Insert(start, @"
+    code = code.Remove(start, end - start).Insert(start, @"
     for (var activeSlot = 1; activeSlot <= 8; activeSlot++)
         global.isPlayerIn[activeSlot] = activeSlot <= global.onlinePlayerCount;");
+    if (dedicated)
+    {
+        code = code.Replace("if (instance_exists(objMatchControl))", "if (instance_exists(objMatchControl) || instance_exists(objMatchControlBoss))");
+        return Replace(code, "\nenum UnknownEnum", @"
+if (global.arena8Enabled)
+{
+    global.arena8ServerTick();
+}
+
+enum UnknownEnum");
+    }
+    return Replace(code, "\nenum UnknownEnum", @"
+if (global.arena8Enabled)
+{
+    global.arena8ClientTick();
+}
+
+enum UnknownEnum");
 });
 
 Edit("gml_Object_objOnlineControl_Other_68", code =>
@@ -250,40 +697,94 @@ Edit("gml_Object_objOnlineControl_Other_68", code =>
                             global.charColor[matchSlot] = global.onlineColors[matchSlot];
                             global.charSkin[matchSlot] = global.onlineSkins[matchSlot];
                             global.slideDownJump[matchSlot] = global.onlineSlideDownJump[matchSlot];
-                            global.teamNumber[matchSlot] = matchSlot;
+                            global.teamNumber[matchSlot] = (global.mode == 3 || global.submode == 8) ? 1 : matchSlot;
                         }
                     }
                     ");
     code = code.Replace("alarm[playerPort] = global.onlinePingInterval;",
         "if (playerPort >= 2 && playerPort <= 4) alarm[playerPort] = global.onlinePingInterval;");
+    code = code.Replace("instance_exists(objMatchControl)", "(instance_exists(objMatchControl) || instance_exists(objMatchControlBoss))");
+    code = Replace(code, @"                        case 810:
+                            global.mode = UnknownEnum.Value_1;
+                            global.submode = UnknownEnum.Value_3;
+                            global.isMinigame4P = false;
+                            break;", @"                        case 810:
+                            global.mode = UnknownEnum.Value_1;
+                            global.submode = UnknownEnum.Value_3;
+                            global.isMinigame4P = false;
+                            break;
+                        case 811:
+                            global.mode = 1;
+                            global.submode = 2;
+                            global.isMinigame4P = false;
+                            break;");
+    code = Replace(code,
+        "                    global.onlineServerIP = global.serverIP;\n                    global.onlineServerPort = global.defaultServerPort;",
+        "                    global.onlineServerIP = global.serverIP;\n                    global.arena8ServerIP = onlineIPconvert(ds_map_find_value(async_load, \"ip\"));\n                    global.arena8ServerPort = ds_map_find_value(async_load, \"port\");\n                    global.onlineServerPort = global.defaultServerPort;");
+
+    int clientIdx = code.IndexOf("\nelse if (socketID == global.clientSocket)");
+    if (clientIdx < 0) throw new InvalidOperationException("Client branch missing");
+    string serverPart = code.Substring(0, clientIdx);
+    string clientPart = code.Substring(clientIdx);
+
     if (dedicated)
-        code = Replace(code, "array_create(5, current_time)", "array_create(9, current_time)");
-    return code;
+    {
+        serverPart = Replace(serverPart, "array_create(5, current_time)", "array_create(9, current_time)");
+        serverPart = Replace(serverPart, "var randomSeed = random_get_seed();",
+            "var randomSeed = random_get_seed();\n                    global.arena8Token = randomSeed % 4294967296;\n                    global.arena8Phase = 0;\n                    global.arena8Departed = array_create(9, false);");
+        serverPart = Replace(serverPart,
+            "        if (dataType == 8 || dataType == 12 || dataType == 13 || dataType == 32 || dataType == 34)",
+            @"        if (dataType == 240)
+        {
+            if (sourceSlot != 0)
+                global.arena8ReceiveProposals(readBuffer, ds_map_find_value(async_load, ""size""), sourceSlot);
+            exit;
+        }
+        if (dataType == 8 || dataType == 12 || dataType == 13 || dataType == 32 || dataType == 34)");
+    }
+
+    clientPart = Replace(clientPart, "        switch (dataType)\n        {\n            case UnknownEnum.Value_4:", @"        if (dataType == 240)
+        {
+            if (global.arena8Enabled && global.arena8ServerIP == onlineIPconvert(ds_map_find_value(async_load, ""ip"")) && global.arena8ServerPort == ds_map_find_value(async_load, ""port""))
+            {
+                global.arena8ReceiveFrames(readBuffer, ds_map_find_value(async_load, ""size""));
+            }
+            exit;
+        }
+        switch (dataType)
+        {
+            case UnknownEnum.Value_4:");
+    clientPart = Replace(clientPart, "                    random_set_seed(randomSeed);",
+        "                    global.arena8Token = randomSeed % 4294967296;\n                    global.arena8Phase = 0;\n                    global.arena8Departed = array_create(9, false);\n                    random_set_seed(randomSeed);");
+
+    return serverPart + clientPart;
 });
 
 Edit("gml_Object_objMainMenuControl_Create_0", code =>
 {
     if (!dedicated) return code;
-    int start = code.IndexOf("global.onlineLobbySize = 2;");
-    int end = code.IndexOf("stageResetDifficulty();", start);
-    if (start < 0 || end < 0) throw new InvalidOperationException("Dedicated mode configuration missing");
-    code = code.Remove(start, end - start).Insert(start, @"
-global.onlineLobbySize = 8;
-global.mmaDedicatedMode = ""Arena8"";
-global.mode = 1;
-global.submode = 3;
-global.subsubmode = 0;
-global.onlineMode = 810;
-global.isMinigame4P = false;
-global.mmaDedicatedStage = ""rmWilyBoss"";
-");
+    code = Replace(code, "global.onlineLobbySize = 2;", "global.onlineLobbySize = 8;");
+    code = Replace(code, "clamp(real(string_delete(flag, 1, 13)), 2, 4)", "clamp(real(string_delete(flag, 1, 13)), 2, 8)");
+    code = Replace(code, "global.mmaDedicatedMode = \"Arena\";", "global.mmaDedicatedMode = \"Arena8\";");
     return code.Replace("array_create(5, 0)", "array_create(9, 0)");
 });
 
-Edit("gml_Object_objOnlineLobby_Create_0", code => Slots(code)
-    .Replace("imgIndex = [0, 0, 0, 0];", "imgIndex = array_create(9, 0);")
-    .Replace("saveMatchStatistics();", "")
-    .Replace("instance_create(0, 0, objCloudSyncMode);", ""));
+Edit("gml_Object_objOnlineLobby_Create_0", code =>
+{
+    code = Slots(code)
+        .Replace("imgIndex = [0, 0, 0, 0];", "imgIndex = array_create(9, 0);")
+        .Replace("saveMatchStatistics();", "")
+        .Replace("instance_create(0, 0, objCloudSyncMode);", "");
+    code = Replace(code, "global.startingMatch = false;", @"global.startingMatch = false;
+if (global.onlineMode == 813 || global.onlineMode == 823)
+{
+    global.subsubmode = 0;
+}");
+    return Replace(code, "event_perform(ev_destroy, 0);", @"event_perform(ev_destroy, 0);
+global.arena8RetirePhase();
+global.arena8Enabled = false;
+global.arena8RestoreSpeed();");
+});
 
 Edit("gml_GlobalScript_onlineLobbyDrawPlayers", _ => @"
 function onlineLobbyDrawPlayers()
@@ -298,7 +799,26 @@ function onlineLobbyDrawPlayers()
     draw_set_halign(fa_center);
     draw_set_valign(fa_top);
     draw_set_color(c_white);
-    draw_text(playerBoxX + (cellWidth div 2), playerBoxY + 9, ""ARENA 8"");
+    var modeLabel = ""ARENA 8"";
+    switch (global.submode)
+    {
+        case 1:
+            modeLabel = ""SQUADS"";
+            break;
+        case 2:
+            modeLabel = ""TEAMS"";
+            break;
+        case 8:
+            modeLabel = ""ELEVATOR"";
+            break;
+        case 11:
+            modeLabel = ""STAGE"";
+            break;
+        case 12:
+            modeLabel = ""BOSS"";
+            break;
+    }
+    draw_text(playerBoxX + (cellWidth div 2), playerBoxY + 9, modeLabel);
     draw_text(playerBoxX + cellWidth + (cellWidth div 2), playerBoxY + 9, string(global.onlinePlayerCount) + "" / 8"");
     for (var rosterSlot = 1; rosterSlot <= 8; rosterSlot++)
     {
@@ -337,17 +857,9 @@ Edit("gml_Object_objMatchControl_Create_0", code =>
 {
     global.isMiniGame4P = true;
 }
-if (global.online && global.onlinePlayerCount > 4 && !global.rollbackEnabled && !global.matchStarted)
+if (global.online && global.onlinePlayerCount > 4 && !global.rollbackEnabled)
 {
-    for (var slot = 1; slot <= global.onlinePlayerCount; slot++)
-    {
-        var frames = global.onlineInputs[slot];
-        ds_list_clear(frames);
-        for (var frame = 0; frame <= global.onlineBuffer; frame++)
-        {
-            ds_list_add(frames, [frame, 0]);
-        }
-    }
+    global.arena8BeginPhase();
 }");
 });
 
@@ -355,7 +867,32 @@ Edit("gml_Object_objMatchControl_Step_2", code =>
     Replace(code, "global.freezeAttempted = [false, false, false, false];", "global.freezeAttempted = array_create(8, false);"));
 
 Edit("gml_Object_objMatchControl_Other_16", code => @"
-if (global.online && global.onlinePlayerCount > 4 && !instance_exists(objSpawnPointP5))
+if (global.online && global.onlinePlayerCount > 4 && (global.mode == 3 || global.submode == 8))
+{
+    var originalPoints = [objSpawnPointP1, objSpawnPointP2, objSpawnPointP3, objSpawnPointP4];
+    var extraPoints = [objSpawnPointP5, objSpawnPointP6, objSpawnPointP7, objSpawnPointP8];
+    for (var slot = 0; slot < (global.onlinePlayerCount - 4); slot++)
+    {
+        if (instance_exists(extraPoints[slot]))
+        {
+            continue;
+        }
+        var anchor = instance_find(originalPoints[slot], 0);
+        if (!instance_exists(anchor))
+        {
+            anchor = instance_find(objSpawnPointP1, 0);
+        }
+        if (!instance_exists(anchor))
+        {
+            anchor = instance_find(objSpawnPointP1moving, 0);
+        }
+        if (instance_exists(anchor))
+        {
+            instance_create(anchor.x, anchor.y, extraPoints[slot]);
+        }
+    }
+}
+if (global.online && global.onlinePlayerCount > 4 && global.mode == 1 && !instance_exists(objSpawnPointP5))
 {
     if (room == rmWilyBoss)
     {
@@ -432,13 +969,65 @@ if (global.online && global.onlinePlayerCount > 4 && !instance_exists(objSpawnPo
 }
 " + code);
 
+Edit("gml_Object_objMatchControlBoss_Create_0", code =>
+{
+    code = Replace(code, "window_set_size(global.xResolution * global.windowScale, global.yResolution * global.windowScale);", "global.arena8ResizeWindow(global.windowScale, false);");
+    code = Replace(code, "if (global.online && i <= 4)", "if (global.online && i <= global.maxOnlinePlayerCount)");
+    code = Replace(code, "global.freezeAttempted = [false, false, false, false];", "global.freezeAttempted = array_create(8, false);");
+    code = Replace(code, "for (var i = 1; i <= 4; i++)\n{\n    global.onlinePlayerForfeited[i] = false;\n}", "for (var i = 1; i <= 8; i++)\n{\n    global.onlinePlayerForfeited[i] = false;\n}");
+    return Replace(code, "alarmTimer[6] = 5;", @"alarmTimer[6] = 5;
+if (global.online && global.onlinePlayerCount > 4 && !global.rollbackEnabled)
+{
+    global.arena8BeginPhase();
+}");
+});
+
+Edit("gml_Object_objMatchControlBoss_Step_2", code =>
+    Replace(code, "global.freezeAttempted = [false, false, false, false];", "global.freezeAttempted = array_create(8, false);"));
+
+Edit("gml_Object_objMatchControlBoss_Other_16", code => @"
+if (global.online && global.onlinePlayerCount > 4 && (global.mode == 3 || global.submode == 8))
+{
+    var originalPoints = [objSpawnPointP1, objSpawnPointP2, objSpawnPointP3, objSpawnPointP4];
+    var extraPoints = [objSpawnPointP5, objSpawnPointP6, objSpawnPointP7, objSpawnPointP8];
+    for (var slot = 0; slot < (global.onlinePlayerCount - 4); slot++)
+    {
+        if (instance_exists(extraPoints[slot]))
+        {
+            continue;
+        }
+        var anchor = instance_find(originalPoints[slot], 0);
+        if (!instance_exists(anchor))
+        {
+            anchor = instance_find(objSpawnPointP1, 0);
+        }
+        if (!instance_exists(anchor))
+        {
+            anchor = instance_find(objSpawnPointP1moving, 0);
+        }
+        if (instance_exists(anchor))
+        {
+            instance_create(anchor.x, anchor.y, extraPoints[slot]);
+        }
+    }
+}
+" + code);
+
 Edit("gml_Object_prtSpawnPoint_Other_14", code =>
     Replace(code,
         "    if (outsideView && global.submode != UnknownEnum.Value_13)",
-        @"    if (outsideView && global.online && global.onlinePlayerCount > 4 && thisPlayer >= 5 && thisPlayer <= 8)
+        @"    if (global.online && global.onlinePlayerCount > 4 && (outsideView || global.submode == 11 || global.submode == 8) && thisPlayer >= 5 && thisPlayer <= 8)
     {
         var originalPoints = [objSpawnPointP1, objSpawnPointP2, objSpawnPointP3, objSpawnPointP4];
         var anchor = instance_find(originalPoints[thisPlayer - 5], 0);
+        if (!instance_exists(anchor))
+        {
+            anchor = instance_find(objSpawnPointP1, 0);
+        }
+        if (!instance_exists(anchor))
+        {
+            anchor = instance_find(objSpawnPointP1moving, 0);
+        }
         if (instance_exists(anchor))
         {
             x = anchor.x;
@@ -459,7 +1048,7 @@ Edit("gml_Object_objTeleportPlayer_Other_13", code =>
 
 Edit("gml_Object_objHealthBar_Draw_64", code =>
 {
-    code = Replace(code, "    var imageScale = global.resolutionFactor;", @"    var arena8Hud = global.online && global.onlinePlayerCount > 4;
+    code = Replace(code, "    var imageScale = global.resolutionFactor;", @"    var arena8Hud = global.online && global.onlinePlayerCount > 4 && thisPlayer <= global.onlinePlayerCount;
     var layoutScale = global.resolutionFactor;
     var imageScale = arena8Hud ? (layoutScale / 2) : layoutScale;");
     code = Replace(code, @"    switch (thisPlayer)
@@ -543,6 +1132,10 @@ Edit("gml_Object_objHealthBar_Draw_64", code =>
     code = Replace(code, "    if (global.online || global.replayOnlineMatch)", @"    if (arena8Hud)
     {
         var labelColor = (thisPlayer == global.onlinePlayerPort) ? global.mmaYellow : c_white;
+        if (global.submode == 2 && variable_instance_exists(id, ""primaryColorLabel""))
+        {
+            labelColor = primaryColorLabel;
+        }
         draw_sprite_ext(sprHealthLabel, thisPlayer - 1, drawX, drawY + (56 * imageScale), imageScale, imageScale, 0, labelColor, 1);
     }
     else if (global.online || global.replayOnlineMatch)");
@@ -598,9 +1191,16 @@ Edit("gml_Object_objHealthBar_Draw_64", code =>
         var oldValign = draw_get_valign();
         draw_set_font(global.MM3font);
         draw_set_color(c_white);
-        draw_set_halign(fa_center);
-        draw_set_valign(fa_top);
-        draw_text_transformed(drawX, drawY + (82 * imageScale), string(localStockCount), imageScale, imageScale, 0);
+        if (global.mode == 3 || global.submode == 8)
+        {
+            drawStockCount(imageScale);
+        }
+        else
+        {
+            draw_set_halign(fa_center);
+            draw_set_valign(fa_top);
+            draw_text_transformed(drawX, drawY + (82 * imageScale), string(localStockCount), imageScale, imageScale, 0);
+        }
         draw_set_valign(oldValign);
         draw_set_halign(oldHalign);
         draw_set_color(oldColor);

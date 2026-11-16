@@ -175,4 +175,58 @@ public sealed class PacketCodecTests
         Assert.Equal(parsedClientIn.Frames, parsedRelay.Frames);
         Assert.Equal(0, controlOutReader.Remaining);
     }
+
+    [Fact]
+    public void DeadlinePackets_ProposalAndBatch_RoundTripAndValidateLengths()
+    {
+        Assert.Equal("5.0.0.4890-arena8-deadline", MmaConstants.Arena8Version);
+
+        var proposal = new DeadlineProposalPacket(
+            Token: 0xABCDEF12u,
+            Phase: 2,
+            AckFrame: 42,
+            Proposals: [new InputFrameEntry(45, 0x00000015u), new InputFrameEntry(46, 0x0000002Au)]);
+        var propWriter = new GmlBufferWriter();
+        proposal.WriteTo(propWriter, sessionId: 9123);
+        byte[] propBytes = propWriter.ToArray();
+        Assert.Equal(14 + (2 * 8), propBytes.Length);
+        Assert.True(DeadlineProposalPacket.TryReadPayload(propBytes, out DeadlineProposalPacket? decodedProp));
+        Assert.NotNull(decodedProp);
+        Assert.Equal(0xABCDEF12u, decodedProp.Token);
+        Assert.Equal((ushort)2, decodedProp.Phase);
+        Assert.Equal(42u, decodedProp.AckFrame);
+        Assert.Equal(proposal.Proposals, decodedProp.Proposals);
+
+        // Truncated or oversized count must be rejected safely.
+        Assert.False(DeadlineProposalPacket.TryReadPayload(propBytes.AsSpan(0, propBytes.Length - 1), out _));
+        byte[] badCountProp = (byte[])propBytes.Clone();
+        badCountProp[13] = 17;
+        Assert.False(DeadlineProposalPacket.TryReadPayload(badCountProp, out _));
+
+        var batch = new DeadlineBatchPacket(
+            Token: 0xABCDEF12u,
+            Phase: 2,
+            HighestCommitted: 48,
+            PlayerCount: 5,
+            Frames:
+            [
+                new DeadlineFrameSnapshot(47, [1, 2, 3, 4, 5]),
+                new DeadlineFrameSnapshot(48, [10, 20, 30, 40, 50])
+            ]);
+        var batchWriter = new GmlBufferWriter();
+        batch.WriteTo(batchWriter, sessionId: 9123);
+        byte[] batchBytes = batchWriter.ToArray();
+        Assert.Equal(14 + (2 * (4 + (5 * 4))), batchBytes.Length);
+
+        Assert.True(DeadlineBatchPacket.TryReadPayload(batchBytes, playerCount: 5, out DeadlineBatchPacket? decodedBatch));
+        Assert.NotNull(decodedBatch);
+        Assert.Equal(48u, decodedBatch.HighestCommitted);
+        Assert.Equal(2, decodedBatch.Frames.Count);
+        Assert.Equal([10u, 20u, 30u, 40u, 50u], decodedBatch.Frames[1].PlayerMasks);
+
+        Assert.False(DeadlineBatchPacket.TryReadPayload(batchBytes, playerCount: 4, out _));
+        Assert.True(DeadlineBatchPacket.TryReadBody(batchBytes.AsSpan(MmaPacketHeader.ByteSize), 5, out DeadlineBatchPacket? decodedBody));
+        Assert.NotNull(decodedBody);
+        Assert.Equal(decodedBatch.HighestCommitted, decodedBody.HighestCommitted);
+    }
 }

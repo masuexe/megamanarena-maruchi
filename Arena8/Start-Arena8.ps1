@@ -1,7 +1,9 @@
 param(
     [Parameter(Mandatory)]
     [ValidateSet('Server','Client','Stop')]
-    [string]$Role
+    [string]$Role,
+    [ValidateSet('Arena8','Teams','Squads','Boss','Elevator','Stage')]
+    [string]$Mode = 'Arena8'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -63,11 +65,13 @@ if ($isClient) {
     return
 }
 
+$Mode = 'Arena8','Teams','Squads','Boss','Elevator','Stage' | Where-Object { $_ -eq $Mode }
+$arguments += @("-mma-mode=$Mode", '-mma-players=8')
 $runner = Start-Process -FilePath $exe -WorkingDirectory $runtime -ArgumentList $arguments -WindowStyle Hidden -PassThru
 for ($i = 0; $i -lt 80; $i++) {
     if ((Test-Path -LiteralPath $log) -and
-        (Select-String -LiteralPath $log -SimpleMatch 'MMA Dedicated: lobby ready (UDP 6528) Arena8 / 8 players' -Quiet)) {
-        Write-Host "Arena 8 is running on UDP 6528 (PID $($runner.Id))."
+        (Select-String -LiteralPath $log -SimpleMatch "MMA Dedicated: lobby ready (UDP 6528) $Mode / 8 players" -Quiet)) {
+        Write-Host "Arena 8 is running on UDP 6528: $Mode / 8 players (PID $($runner.Id))."
         Write-Host "Log: $log"
         return
     }

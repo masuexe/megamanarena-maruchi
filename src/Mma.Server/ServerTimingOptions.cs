@@ -20,7 +20,7 @@ public sealed record ServerTimingOptions(
     public static ServerTimingOptions Default { get; } = new(
         StartingMatchTimeout: TimeSpan.FromSeconds(10),
         MatchStallTimeout: TimeSpan.FromSeconds(15),
-        TickInterval: TimeSpan.FromMilliseconds(50),
+        TickInterval: TimeSpan.FromMilliseconds(16),
         LobbyHeartbeatInterval: TimeSpan.FromSeconds(3),
         FreezeRetransmitCooldown: TimeSpan.FromMilliseconds(12),
         RudpRetransmitInterval: TimeSpan.FromMilliseconds(1200),

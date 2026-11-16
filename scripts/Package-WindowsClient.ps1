@@ -94,26 +94,26 @@ popd
 '@ + "`n"
 
 $usageTxt = @'
-Mega Man Arena 5.0 · Maruchi 客户端整合包（Windows）
-===================================================
+Mega Man Arena 5.0 · Maruchi 全模式八人版客户端（Windows）
+=========================================================
 
 [简体中文说明]
-1. 将这个 ZIP 全部解压到一个单独的文件夹（请保留目录结构）。
-2. 玩八人自由对战时，双击 Start Arena8 Client.cmd。
-3. 在游戏内打开 Online -> Direct IP，输入房主给的 IP 地址。八人服默认使用 UDP 6528。
-4. 玩家到齐（>= 2 人）且在房间内全部按 Ready 后即可开局。请确保八人服和所有玩家使用兼容版本。
-
-加入原版 2-4 人房时，双击 Start Original Client.cmd，同样通过 Online -> Direct IP 输入 IP 连接（原版服默认使用 UDP 6520）。
-
-八人版屏幕大小可在 Options -> Screen Size 里选 FIT（默认已开启，按桌面可用区域自适应缩放）。
-八人版运行日志位于 local/runtime/Arena8-client 内。
+1. 完整解压整个 ZIP，保留目录结构。
+2. 双击 Start Arena8 Client.cmd，在 Online -> Direct IP 输入服务器 IPv4。八人服默认使用 UDP 6528。
+3. 全模式八人版支持自由对战（Arena8）、分队（Teams）、小队（Squads）、打 Boss（Boss）、电梯闯关（Elevator）和关卡闯关（Stage）。
+   - 具体模式由服务端配置决定。分队对战按角色队色区分，小队模式需先选齐小队成员再按 Ready。
+4. 房间上限为 8 人，只要当前在线人数 >= 2 且全员按 Ready 即可直接开局。
+5. 抗卡顿机制（Deadline Timeline）：服务端按固定节奏确认每帧输入；单个玩家短时丢包时，缺失输入临时按松开按键处理而不冻结全房，网络恢复后客户端会补收帧并自动追帧同步。
+6. 加入原版 2-4 人房时，请双击 Start Original Client.cmd（使用 UDP 6520）。
+7. 八人版可在 Options -> Screen Size 选择 FIT 自动适配桌面工作区；日志保存在 local/runtime/Arena8-client。
 
 [English Quick Start]
-1. Extract the full ZIP archive into a dedicated folder, keeping the directory layout intact.
-2. Double-click Start Arena8 Client.cmd for 5-8 player Arena8 matches (connect via Online -> Direct IP, UDP 6528), or Start Original Client.cmd for stock 2-4 player lobbies (UDP 6520).
-3. Screen Size defaults to FIT in Options -> Screen Size to scale cleanly within your desktop work area.
+1. Extract the entire ZIP into a dedicated folder, keeping the directory layout intact.
+2. Double-click Start Arena8 Client.cmd, open Online -> Direct IP, and enter the host IPv4 (UDP 6528).
+   Supports 2-8 players across Arena8, Teams, Squads, Boss, Elevator, and Stage modes (with anti-stall deadline sync & FIT scaling).
+3. Double-click Start Original Client.cmd to join stock 2-4 player servers (UDP 6520).
 
-注意：包内已包含原版 5.0 游戏文件与 Arena8 客户端补丁，仅限私人本地联机使用，请勿上传到公开代码仓库。
+注意：包内含原版 5.0 游戏运行资产与 Arena8 补丁，仅限私人本地联机使用，请勿上传公开仓库。
 '@ + "`n"
 
 $outDir = Split-Path -Parent $OutputPath

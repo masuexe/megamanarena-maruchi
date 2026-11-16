@@ -1,6 +1,6 @@
 # Mega Man Arena 联机线缆协议规范
 
-> **净室规范说明**：本文档通过净室工程分析整理 **Mega Man Arena 5.0**（网络协议版本字符串 `"5.0.0.4890"`）及其 **Arena8**（8 人补丁，`"5.0.0.4890-arena8"`）与 **DedicatedServer**（独立服务器补丁）的线缆传输格式、分包规则、数据包结构与状态机。文档严格遵守净室原则，不包含任何反编译原始代码。
+> **净室规范说明**：本文档通过净室工程分析整理 **Mega Man Arena 5.0**（网络协议版本字符串 `"5.0.0.4890"`）及其 **Arena8**（全模式 8 人 + 抗卡顿截止帧时间线补丁，`"5.0.0.4890-arena8-deadline"`）与 **DedicatedServer**（独立服务器补丁）的线缆传输格式、分包规则、数据包结构与状态机。文档严格遵守净室原则，不包含任何反编译原始代码。
 
 ---
 
@@ -10,7 +10,7 @@
 | --- | :---: | :---: | --- | :---: | --- |
 | **原版 5.0 (4P)** | `6520` | `6521` | `"5.0.0.4890"` | `4` | `sendDataToNewPlayer` 硬编码 `switch (1..5)`；房主固定占用 `1` 号槽位 |
 | **DedicatedServer (4P 补丁)** | `6520` | `6521` | `"5.0.0.4890"` | `2..4` | 服务端设 `onlineObserver = true`（不占玩家槽位）；校验 `(IP, port)` -> `sourceSlot`；屏蔽客户端伪造包及主机专属管理包 `8, 12, 13, 32, 34`；强制开局与活跃超时限制 |
-| **Arena8 (8P 补丁)** | `6528` | `6529` | `"5.0.0.4890-arena8"` | `8` | 改用循环版 `sendDataToNewPlayer`（支持 `1..8+`），省略末尾 `"NEW PLAYER JOIN"` 标签；人数 `> 4` 时禁用录像；预设 `teamNumber[slot] = slot` |
+| **Arena8 (全模式 8P + Deadline)** | `6528` | `6529` | `"5.0.0.4890-arena8-deadline"` | `8` | 循环版 `sendDataToNewPlayer`（支持 `1..8+`）并省略末尾 `"NEW PLAYER JOIN"`；支持全 6 种模式；`> 4` 人对局改用 `240` 号权威截止时间线包（`2..4` 人仍走 `0` 号输入中继） |
 
 ### 1.1 槽位与列表索引规则
 
@@ -142,6 +142,7 @@
 | `37` | `OBSERVER_DISCONNECT` | `Port` | `C->S` | 是 | `u8 observerSlot`（1-based）。观战者正常退出（触发 `onlineRemoveObserver`）。 |
 | `38` | `CHANGE_OBSERVER_COUNT` | `Port` | `S->C` | 是 | `u8 observerCount`, [`str "CHANGE_OBSERVER_COUNT"`]。观战者加入或退出时广播。*（注：原版服务端通知其他观战者的循环存在 `i = 0` 时索引 `i - 1` 的脚本缺陷。）* |
 | `39` | `CHANGE_STAGE_DIFFICULTY` | `Port` | `S->C` | 是 | `u8 enemyDamage`, `u8 bossArmor`, `u8 stockReduction`, `bool removeBlueFlags`, `bool removeDrops`, `bool spikeInstakill`, `bool increasedEnemies`, `bool teamAttack`, [`str "CHANGE_STAGE_DIFFICULTY"`]。 |
+| `240` | `DEADLINE_TIMELINE` | `Port` | `C->S`, `S->C` | 是 | **Arena8 抗卡顿时间线包（`> 4` 人对局）**：`u32 token`, `u16 phase`, `u32 ackOrHighest`, `u8 count`，后接 `count` 条帧记录。详见 7.4.1 节。 |
 
 ---
 
@@ -327,6 +328,14 @@ sequenceDiagram
   - 当未启用回滚（或 `onlineCanAdvanceFrame == false`）且在 `onlineMatchFrame > onlineBuffer` 下存在槽位未通过 `hasCurrentInput(slot)` 时，`onlineHandleFreeze` 置 `paused = true`、`frozen = true` 且 `onlineCanAdvanceFrameAtEnd = false`，将逻辑帧冻结在当前步。
   - 在冻结期间，`sendInputsWhenFrozen` 通过调用 `sendInputs("server", localPlayerSlot)`（配合常规每步 `sendInputs`）持续重传本地缓冲帧，使丢失的 UDP 输入报文得以补齐恢复。*（注：导出的联机脚本中另存在未被引用的辅助脚本 `sendEmptyInputs`，无任何调用点。）*
   - 缺失帧经 `0`（`INPUT`）补齐并通过 `hasCurrentInput` 校验后，所有端从同一状态确定性恢复运行。
+
+#### 7.4.1 权威截止时间线协议（`DataType = 240`，Arena8 超过 4 人对局）
+
+当 `Arena8` 对局实际在线玩家超过 `4` 人（`5..8` 人）时，客户端与服务端启用基于控制端口（`Port`）RUDP 的 **`240` 号包（`DEADLINE_TIMELINE`）**，防止个别玩家短暂丢包冻结整局游戏：
+
+- **公共 14 字节包头**：`[u16 sessionId][u8 240][u32 token][u16 phase][u32 ackOrHighest][u8 count]`，其中 `token = randomSeed % 2^32`，`phase` 从 `1` 递增（如 Stage 模式切入 Boss 房间时进入 `phase = 2`）。
+- **客户端提案（`C -> S`，`14 + count × 8` 字节，`count <= 16`）**：携带本端连续已确认帧 `ackFrame`，及若干 `(u32 frame, u32 bitmask)`（本地按 `max(3, ceil(buffer / 2))` 提前采样，每 `12ms` 上行）。
+- **服务端权威提交（`S -> C`，`14 + count × (4 + playerCount × 4)` 字节，`count <= 20`）**：服务端按 `60 Hz` 节奏推进截止帧（最多提前 `confirmLead = max(2, ceil(buffer / 3))`），超时未到位的玩家输入按松开按键（`0`）提交；常规每次下发最新 `<= 8` 帧（空闲时 `200ms` 心跳），若发现对端 `ackFrame` 落后则补发最多 `20` 帧修复批次 `[ackFrame + 1 .. recent - 1]`（旧阶段历史保留 `18s` 供跨房间追帧）。客户端队列积压超过 `buffer + 8` 帧时自动以 `1.5×` 倍速追帧同步。
 
 ### 7.5 保活、断线、认输与自然结算（`Round 2`）
 

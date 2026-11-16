@@ -23,6 +23,7 @@ public sealed class MmaServerEngine
     private bool _gotoLevelSent;
     private bool _matchInputsSeen;
     private uint _estimatedMatchFrame;
+    private DeadlineTimelineManager? _deadlineTimeline;
 
     public MmaServerEngine(
         ServerOptions options,
@@ -77,7 +78,7 @@ public sealed class MmaServerEngine
         var header = MmaPacketHeader.ReadFrom(reader);
         var packetType = (MmaPacketType)header.DataType;
 
-        if (packetType != MmaPacketType.Input)
+        if (packetType is not MmaPacketType.Input and not MmaPacketType.DeadlineTimeline)
         {
             _logWriter.WriteLine(
                 $"[{_timeProvider.GetUtcNow():O}] Received UDP datagram ({payload.Length} bytes) from {remoteEndPoint}: sessionId={header.SessionId}, dataType={header.DataType} ({packetType})");
@@ -115,6 +116,7 @@ public sealed class MmaServerEngine
                 MmaPacketType.Forfeit => HandleForfeit(sender, reader),
                 MmaPacketType.Disconnect => HandleDisconnect(sender, reader),
                 MmaPacketType.Input => HandleControlInput(sender, reader),
+                MmaPacketType.DeadlineTimeline => HandleDeadlineTimeline(sender, payload.Span),
                 _ => []
             };
         }
@@ -174,6 +176,60 @@ public sealed class MmaServerEngine
         if (_phase == LobbyPhase.InMatch && _players.Count > 0)
         {
             var outbound = new List<OutboundDatagram>();
+            if (_deadlineTimeline is not null)
+            {
+                outbound.AddRange(_deadlineTimeline.Tick(_players, _sessionId, now, out uint committedFrame));
+                if (committedFrame > _estimatedMatchFrame)
+                {
+                    _estimatedMatchFrame = committedFrame;
+                }
+
+                bool anyDepartedJustNow = false;
+                foreach (PlayerSlotState player in _players)
+                {
+                    if (_deadlineTimeline.IsDeparted(player.Slot))
+                    {
+                        continue;
+                    }
+
+                    if (now - player.LastMatchActivity > _timings.MatchStallTimeout)
+                    {
+                        if (_deadlineTimeline.MarkDeparted(player.Slot))
+                        {
+                            anyDepartedJustNow = true;
+                            _logWriter.WriteLine(
+                                $"[{now:O}] Player P{player.Slot} stalled in deadline match (>{_timings.MatchStallTimeout.TotalSeconds:0.#}s); marking departed.");
+                        }
+                        continue;
+                    }
+
+                    if (_matchInputsSeen &&
+                        !player.ReturnedToLobby &&
+                        _timings.LobbyHeartbeatInterval > TimeSpan.Zero &&
+                        now - player.LastMatchActivity >= _timings.LobbyHeartbeatInterval &&
+                        now - player.LastHeartbeatSentAt >= _timings.LobbyHeartbeatInterval)
+                    {
+                        player.LastHeartbeatSentAt = now;
+                        outbound.Add(BuildGratuitousPing(player));
+                    }
+                }
+
+                if (_players.All(p => _deadlineTimeline.IsDeparted(p.Slot)))
+                {
+                    _logWriter.WriteLine($"[{now:O}] All players stalled in deadline match (>{_timings.MatchStallTimeout.TotalSeconds:0.#}s); closing lobby.");
+                    return CloseAndResetRoom();
+                }
+
+                if (anyDepartedJustNow &&
+                    _matchInputsSeen &&
+                    _players.All(p => p.ReturnedToLobby || _deadlineTimeline.IsDeparted(p.Slot)))
+                {
+                    outbound.AddRange(ResetMatchStateForRound2(now));
+                }
+
+                return outbound;
+            }
+
             foreach (PlayerSlotState player in _players)
             {
                 if (now - player.LastMatchActivity > _timings.MatchStallTimeout)
@@ -413,24 +469,32 @@ public sealed class MmaServerEngine
         sender.LastLobbyActivity = now;
         sender.LastMatchActivity = now;
 
+        List<OutboundDatagram>? resetOutbound = null;
         if (_phase == LobbyPhase.InMatch && _matchInputsSeen)
         {
             sender.ReturnedToLobby = true;
-            if (_players.All(p => p.ReturnedToLobby))
+            if (_players.All(p => p.ReturnedToLobby || (_deadlineTimeline?.IsDeparted(p.Slot) ?? false)))
             {
-                ResetMatchStateForRound2(now);
+                resetOutbound = ResetMatchStateForRound2(now);
             }
         }
 
         if (!echoGratuitous)
         {
-            return [];
+            return resetOutbound ?? [];
         }
 
-        return
-        [
-            BuildControlDatagram(sender, MmaPacketType.GratuitousPingEcho, static w => w.WriteGmlString("GRATUITOUS_PING_ECHO"))
-        ];
+        OutboundDatagram echo = BuildControlDatagram(
+            sender,
+            MmaPacketType.GratuitousPingEcho,
+            static w => w.WriteGmlString("GRATUITOUS_PING_ECHO"));
+        if (resetOutbound is null || resetOutbound.Count == 0)
+        {
+            return [echo];
+        }
+
+        resetOutbound.Insert(0, echo);
+        return resetOutbound;
     }
 
     private List<OutboundDatagram> HandleCharChange(PlayerSlotState sender, GmlBufferReader reader)
@@ -649,7 +713,7 @@ public sealed class MmaServerEngine
         sender.LevelChoice = packet.StageChoice;
         sender.LastLobbyActivity = now;
 
-        if (_players.Count != _options.MaxPlayers || _players.Any(p => p.LevelChoice is null))
+        if (_players.Count < MmaConstants.MinPlayers || _players.Any(p => p.LevelChoice is null))
         {
             return [];
         }
@@ -693,6 +757,9 @@ public sealed class MmaServerEngine
 
         byte clampedBuffer = (byte)Math.Clamp(_options.Buffer, 0, MmaConstants.MaxOnlineBuffer);
         ulong seed = _nextRandomSeed();
+        _deadlineTimeline = _options.UsesArena8Protocol && _players.Count > MmaConstants.StockMaxPlayers
+            ? new DeadlineTimelineManager(seed, clampedBuffer, _players.Count, now)
+            : null;
         var gotoLevel = new GotoLevelPacket(
             _options.ResolvedStage,
             seed,
@@ -793,6 +860,22 @@ public sealed class MmaServerEngine
         return outbound;
     }
 
+    private List<OutboundDatagram> HandleDeadlineTimeline(PlayerSlotState sender, ReadOnlySpan<byte> fullDatagram)
+    {
+        if (_phase != LobbyPhase.InMatch || _deadlineTimeline is null)
+        {
+            return [];
+        }
+
+        DateTimeOffset now = _timeProvider.GetUtcNow();
+        sender.LastMatchActivity = now;
+        sender.ReturnedToLobby = false;
+        _matchInputsSeen = true;
+
+        IReadOnlyList<OutboundDatagram> reply = _deadlineTimeline.HandleProposal(sender, fullDatagram, _sessionId, now);
+        return reply.Count == 0 ? [] : [.. reply];
+    }
+
     private List<OutboundDatagram> HandleControlInput(PlayerSlotState sender, GmlBufferReader reader)
     {
         sender.ObservedInputTransport = PeerInputTransport.Control;
@@ -849,9 +932,9 @@ public sealed class MmaServerEngine
             if (_phase == LobbyPhase.InMatch && _matchInputsSeen)
             {
                 matched.ReturnedToLobby = true;
-                if (_players.All(p => p.ReturnedToLobby))
+                if (_players.All(p => p.ReturnedToLobby || (_deadlineTimeline?.IsDeparted(p.Slot) ?? false)))
                 {
-                    ResetMatchStateForRound2(now);
+                    return ResetMatchStateForRound2(now);
                 }
             }
         }
@@ -979,6 +1062,7 @@ public sealed class MmaServerEngine
         _gotoLevelSent = false;
         _matchInputsSeen = false;
         _estimatedMatchFrame = 0;
+        _deadlineTimeline = null;
         _sessionId = _nextSessionId();
         return outbound;
     }
@@ -987,17 +1071,37 @@ public sealed class MmaServerEngine
     {
         if (_phase == LobbyPhase.InMatch)
         {
-            ResetMatchStateForRound2(now);
+            _ = ResetMatchStateForRound2(now);
         }
     }
 
-    private void ResetMatchStateForRound2(DateTimeOffset now)
+    private List<OutboundDatagram> ResetMatchStateForRound2(DateTimeOffset now)
     {
+        DeadlineTimelineManager? previousTimeline = _deadlineTimeline;
         _phase = LobbyPhase.Lobby;
         _gotoLevelSent = false;
         _matchInputsSeen = false;
         _startingMatchDeadline = null;
         _estimatedMatchFrame = 0;
+        _deadlineTimeline = null;
+
+        bool removedAny = false;
+        if (previousTimeline is not null && previousTimeline.HasAnyDeparted)
+        {
+            for (int i = _players.Count - 1; i >= 0; i--)
+            {
+                if (previousTimeline.IsDeparted(_players[i].Slot))
+                {
+                    _players.RemoveAt(i);
+                    removedAny = true;
+                }
+            }
+
+            for (int i = 0; i < _players.Count; i++)
+            {
+                _players[i].Slot = (byte)(i + 1);
+            }
+        }
 
         foreach (PlayerSlotState player in _players)
         {
@@ -1015,6 +1119,40 @@ public sealed class MmaServerEngine
         }
 
         _logWriter.WriteLine($"[{now:O}] Round complete; room returned to Lobby for Round 2.");
+
+        if (!removedAny || _players.Count == 0)
+        {
+            return [];
+        }
+
+        var syncOutbound = new List<OutboundDatagram>();
+        byte newCount = (byte)_players.Count;
+        foreach (PlayerSlotState recipient in _players)
+        {
+            var portPacket = new ChangePlayerPortPacket(recipient.Slot, newCount);
+            syncOutbound.Add(BuildControlDatagram(recipient, MmaPacketType.ChangePlayerPort, portPacket.WritePayload));
+
+            foreach (PlayerSlotState entry in _players)
+            {
+                var dataPacket = new ChangePlayerDataPacket(
+                    entry.Slot,
+                    entry.Name,
+                    entry.Character,
+                    entry.Color,
+                    entry.CustomPrimaryColor,
+                    entry.CustomSecondaryColor,
+                    entry.Skin,
+                    entry.Stage,
+                    entry.Ready,
+                    entry.SlideDownJump,
+                    entry.HandicapStock,
+                    entry.HandicapHealth,
+                    entry.CheatEnabled);
+                syncOutbound.Add(BuildControlDatagram(recipient, MmaPacketType.ChangePlayerData, dataPacket.WritePayload));
+            }
+        }
+
+        return syncOutbound;
     }
 
     private bool HasDistinctTeams()
@@ -1235,7 +1373,7 @@ public sealed class MmaServerEngine
 
     private static ulong GenerateNonZeroSeed()
     {
-        ulong value = (ulong)Random.Shared.NextInt64(1, long.MaxValue);
+        ulong value = (ulong)Random.Shared.NextInt64(1, 0x1_0000_0000L);
         return value == 0 ? 1UL : value;
     }
 }

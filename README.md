@@ -159,4 +159,4 @@ Settings resolve in four tiers from **lowest to highest precedence**:
 
 ## Contributors & Acknowledgements
 
-- **Lin** — Collaborator on the `Arena8` 8-player client experience & netcode optimizations (`SCREEN SIZE: FIT` desktop work-area scaling, native half-scale 8-player sprite HUD & 2×4 lobby UI grid, multi-stage `P5..P8` spawn placement & camera recovery, 8-player lockstep input pacing/queue stabilization, and the portable Windows client bundle design).
+- **Lin** — Collaborator on the all-mode `Arena8` 8-player client & anti-stall netcode (`Packet 240` Deadline Timeline anti-freeze frame sync & `1.5×` client catch-up, all 6 modes up to 8 players, `SCREEN SIZE: FIT` desktop work-area scaling, native half-scale 8-player sprite HUD & 2×4 lobby grid, multi-stage `P5..P8` spawn placement & camera recovery, and the portable Windows client bundle layout).

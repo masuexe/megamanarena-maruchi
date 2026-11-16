@@ -25,7 +25,13 @@ public static class MmaConstants
     public const string ProbePongPrefix = "MMA_PONG";
 
     public const string StockVersion = "5.0.0.4890";
-    public const string Arena8Version = "5.0.0.4890-arena8";
+    public const string Arena8Version = "5.0.0.4890-arena8-deadline";
+
+    public const int DeadlineHeaderSize = 14;
+    public const int DeadlineMaxProposalCount = 16;
+    public const int DeadlineMaxBatchCount = 20;
+    public const int DeadlineHistorySize = 1024;
+    public const int DeadlineQueueSize = 128;
 
     public const ushort OnlineModeArena = 810;
     public const ushort OnlineModeSquads = 812;

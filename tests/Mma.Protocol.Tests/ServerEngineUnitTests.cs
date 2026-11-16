@@ -450,5 +450,114 @@ public sealed class ServerEngineUnitTests
             Assert.Equal(MmaPacketType.PlayerReady, h.KnownType);
             Assert.True(ServerPlayerReadyPacket.ReadPayload(r).AllReady);
         }
+
+        // Only 2 connected players in a 4-slot room must also launch GotoLevel on MatchReady.
+        var g1 = engine.HandleControlDatagram(p1Ep, BuildControl(9101, MmaPacketType.GotoLevel, new MatchReadyPacket(1, "rmWilyBoss").WritePayload));
+        Assert.Empty(g1);
+        var g2 = engine.HandleControlDatagram(p2Ep, BuildControl(9101, MmaPacketType.GotoLevel, new MatchReadyPacket(2, "rmWilyBoss").WritePayload));
+        Assert.Contains(g2, d => d.Payload[2] == (byte)MmaPacketType.GotoLevel);
+        Assert.Equal(LobbyPhase.InMatch, engine.Phase);
+    }
+
+    [Fact]
+    public void DeadlineTimeline_SingleStallDepartsCleanly_StagePhase2RetiresHistory_AndRound2CompactsSlots()
+    {
+        var clock = new ManualTimeProvider(new DateTimeOffset(2026, 11, 17, 0, 0, 0, TimeSpan.Zero));
+        var timings = new ServerTimingOptions(
+            StartingMatchTimeout: TimeSpan.FromSeconds(10),
+            MatchStallTimeout: TimeSpan.FromSeconds(5),
+            TickInterval: TimeSpan.FromMilliseconds(16),
+            LobbyHeartbeatInterval: TimeSpan.FromSeconds(3),
+            FreezeRetransmitCooldown: TimeSpan.FromMilliseconds(12));
+        var options = new ServerOptions(IPAddress.Loopback, 6528, 5, "Arena8", Buffer: 6);
+        const ulong fixedSeed = 0x12345678UL;
+        var engine = new MmaServerEngine(options, clock, timings, nextSessionId: () => 9500, nextRandomSeed: () => fixedSeed);
+
+        var endpoints = Enumerable.Range(0, 5)
+            .Select(i => new IPEndPoint(IPAddress.Loopback, 49100 + (i * 2)))
+            .ToArray();
+        for (int i = 0; i < 5; i++)
+        {
+            ConnectAndAck(engine, endpoints[i], $"P{i + 1}", (byte)(i + 1), color: (byte)i, version: MmaConstants.Arena8Version);
+        }
+
+        for (int i = 0; i < 5; i++)
+        {
+            engine.HandleControlDatagram(endpoints[i], BuildControl(9500, MmaPacketType.PlayerReady, new ClientReadyPacket((byte)(i + 1)).WritePayload));
+        }
+
+        for (int i = 0; i < 5; i++)
+        {
+            engine.HandleControlDatagram(endpoints[i], BuildControl(9500, MmaPacketType.GotoLevel, new MatchReadyPacket((byte)(i + 1), "rmWilyBoss").WritePayload));
+        }
+        Assert.Equal(LobbyPhase.InMatch, engine.Phase);
+
+        byte[] BuildProposal(uint token, ushort phase, uint ack, params InputFrameEntry[] entries)
+        {
+            var w = new GmlBufferWriter();
+            new DeadlineProposalPacket(token, phase, ack, entries).WriteTo(w, 9500);
+            return w.ToArray();
+        }
+
+        const uint token = 0x12345678u;
+        // Players 1..4 send proposals for frames 7..9; P5 stays silent (lagging/crashed).
+        for (int i = 0; i < 4; i++)
+        {
+            Assert.Empty(engine.HandleControlDatagram(
+                endpoints[i],
+                BuildProposal(token, phase: 1, ack: 6, new InputFrameEntry(9, (uint)(i + 10)))));
+        }
+
+        // Initial ConfirmLead (= 2) commits 7 and 8 immediately on first tick; 17ms later commits 9 with P5=0.
+        var t0Out = engine.Tick();
+        Assert.NotEmpty(t0Out);
+        clock.Advance(TimeSpan.FromMilliseconds(20));
+        var t1Out = engine.Tick();
+        var p1Batch = Assert.Single(t1Out, d => d.Target.Equals(endpoints[0]) && d.Payload[2] == (byte)MmaPacketType.DeadlineTimeline);
+        Assert.True(DeadlineBatchPacket.TryReadPayload(p1Batch.Payload, 5, out DeadlineBatchPacket? batch9));
+        Assert.NotNull(batch9);
+        Assert.True(batch9.HighestCommitted >= 9u);
+        DeadlineFrameSnapshot snap9 = Assert.Single(batch9.Frames, f => f.FrameId == 9u);
+        Assert.Equal([10u, 11u, 12u, 13u, 0u], snap9.PlayerMasks);
+
+        // Phase 1 -> Phase 2 (e.g. Stage mode entering boss room): P1 proposes phase=2.
+        Assert.Empty(engine.HandleControlDatagram(endpoints[0], BuildProposal(token, phase: 2, ack: 6, new InputFrameEntry(9, 77u))));
+        // Lagging P4 still requests retired Phase 1 repair from ack=6 -> gets direct retired batch!
+        var repairOut = engine.HandleControlDatagram(endpoints[3], BuildProposal(token, phase: 1, ack: 6));
+        var repairDgram = Assert.Single(repairOut);
+        Assert.True(DeadlineBatchPacket.TryReadPayload(repairDgram.Payload, 5, out DeadlineBatchPacket? retiredBatch));
+        Assert.Equal((ushort)1, retiredBatch!.Phase);
+        Assert.Equal(9u, retiredBatch.HighestCommitted);
+        Assert.Equal([7u, 8u, 9u], retiredBatch.Frames.Select(f => f.FrameId).ToArray());
+
+        // Advance past MatchStallTimeout (5.5s) keeping P1..P4 alive with heartbeats while P5 never responds.
+        for (int s = 0; s < 6; s++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(1));
+            for (int i = 0; i < 4; i++)
+            {
+                engine.HandleControlDatagram(endpoints[i], BuildProposal(token, phase: 2, ack: 6));
+            }
+            var tickOut = engine.Tick();
+            Assert.DoesNotContain(tickOut, d => d.Payload[2] == (byte)MmaPacketType.LobbyClosed);
+        }
+        Assert.Equal(LobbyPhase.InMatch, engine.Phase);
+
+        // P1..P4 finish round and return to lobby -> departed P5 is removed & slots compact cleanly to 4!
+        for (int i = 0; i < 4; i++)
+        {
+            var pingOut = engine.HandleControlDatagram(endpoints[i], BuildControl(9500, MmaPacketType.GratuitousPing, w =>
+            {
+                w.WriteU8((byte)(i + 1));
+                w.WriteGmlString("GRATUITOUS_PING");
+            }));
+            if (i == 3)
+            {
+                Assert.Contains(pingOut, d => d.Payload[2] == (byte)MmaPacketType.ChangePlayerPort);
+                Assert.Contains(pingOut, d => d.Payload[2] == (byte)MmaPacketType.ChangePlayerData);
+            }
+        }
+        Assert.Equal(LobbyPhase.Lobby, engine.Phase);
+        Assert.Equal(4, engine.ConnectedPlayerCount);
     }
 }

@@ -43,5 +43,6 @@ public enum MmaPacketType : byte
     ObserverPing = 36,
     ObserverDisconnect = 37,
     ObserverCount = 38,
-    StageDifficulties = 39
+    StageDifficulties = 39,
+    DeadlineTimeline = 240
 }

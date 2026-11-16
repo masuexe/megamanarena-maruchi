@@ -1,6 +1,6 @@
 # Mega Man Arena Online Wire Protocol Specification
 
-> **Clean-Room Specification Notice**: This document specifies the wire protocol, framing rules, packet layouts, and state transitions of **Mega Man Arena 5.0** (network version string `"5.0.0.4890"`), along with the **Arena8** (8-player, `"5.0.0.4890-arena8"`) and **DedicatedServer** extensions, derived strictly through clean-room engineering analysis. No game source code is reproduced here.
+> **Clean-Room Specification Notice**: This document specifies the wire protocol, framing rules, packet layouts, and state transitions of **Mega Man Arena 5.0** (network version string `"5.0.0.4890"`), along with the **Arena8** (all-mode 8-player + anti-stall deadline timeline, `"5.0.0.4890-arena8-deadline"`) and **DedicatedServer** extensions, derived strictly through clean-room engineering analysis. No game source code is reproduced here.
 
 ---
 
@@ -10,7 +10,7 @@
 | --- | :---: | :---: | --- | :---: | --- |
 | **Stock 5.0 (4P)** | `6520` | `6521` | `"5.0.0.4890"` | `4` | Hardcoded `sendDataToNewPlayer` `switch (1..5)`; host is slot `1` |
 | **DedicatedServer (4P Patch)** | `6520` | `6521` | `"5.0.0.4890"` | `2..4` | Host sets `onlineObserver = true` (occupies no player slot); enforces `(IP, port)` -> `sourceSlot` validation; blocks client-sent host packets `8, 12, 13, 32, 34`; enforces start/inactivity deadlines |
-| **Arena8 (8P Patch)** | `6528` | `6529` | `"5.0.0.4890-arena8"` | `8` | Loop-based `sendDataToNewPlayer` (`1..8+`), omits trailing `"NEW PLAYER JOIN"` tag, disables replays above 4 players, assigns per-slot teams `teamNumber[slot] = slot` |
+| **Arena8 (All-Mode 8P + Deadline)** | `6528` | `6529` | `"5.0.0.4890-arena8-deadline"` | `8` | Loop-based `sendDataToNewPlayer` (`1..8+`), omits trailing `"NEW PLAYER JOIN"` tag, supports all 6 modes (`Arena8`, `Teams`, `Squads`, `Boss`, `Elevator`, `Stage`), uses Packet `240` (`DEADLINE_TIMELINE`) authoritative 60 Hz frame commit when `onlinePlayerCount > 4` (standard Packet `0` for `2..4` players) |
 
 ### 1.1 Slot & List Indexing Rules
 
@@ -142,6 +142,7 @@ Packets on the Control socket (`Port`) travel inside GM RUDP `kind = 1` (`DATA`,
 | `37` | `OBSERVER_DISCONNECT` | `Port` | `C->S` | Yes | `u8 observerSlot` (1-based). Clean observer exit (`onlineRemoveObserver`). |
 | `38` | `CHANGE_OBSERVER_COUNT` | `Port` | `S->C` | Yes | `u8 observerCount`, [`str "CHANGE_OBSERVER_COUNT"`]. Broadcast when observer joins or leaves. *(Stock bug: server's observer-notify loop uses index `i - 1` starting from `i = 0`.)* |
 | `39` | `CHANGE_STAGE_DIFFICULTY` | `Port` | `S->C` | Yes | `u8 enemyDamage`, `u8 bossArmor`, `u8 stockReduction`, `bool removeBlueFlags`, `bool removeDrops`, `bool spikeInstakill`, `bool increasedEnemies`, `bool teamAttack`, [`str "CHANGE_STAGE_DIFFICULTY"`]. |
+| `240` | `DEADLINE_TIMELINE` | `Port` | `C->S`, `S->C` | Yes | **Arena8 Deadline extension (`> 4` active players)**: `u32 token`, `u16 phase`, `u32 ackOrHighest`, `u8 count`, followed by `count × (frame, bitmask[s])`. See Section 7.4.1 below. |
 
 ---
 
@@ -327,6 +328,14 @@ sequenceDiagram
   - When rollback is disabled (or `onlineCanAdvanceFrame == false`) and any player fails `hasCurrentInput(slot)` with `onlineMatchFrame > onlineBuffer`, `onlineHandleFreeze` sets `paused = true`, `frozen = true`, and `onlineCanAdvanceFrameAtEnd = false`, stalling simulation at the current frame.
   - While stalled, `sendInputsWhenFrozen` delegates to `sendInputs("server", localPlayerSlot)` (alongside normal per-step `sendInputs` transmissions) so lost UDP frames can recover via redundant input retransmission. *(Note: `sendEmptyInputs` exists as an unreferenced helper in the exported online scripts with no callers.)*
   - Once missing frame packets arrive via `0` (`INPUT`) and pass `hasCurrentInput`, simulation resumes deterministically.
+
+#### 7.4.1 Deadline Authoritative Timeline (`DataType = 240`, Arena8 `> 4` Players)
+
+When an `Arena8` match launches with more than `4` active players (`5..8`), clients and servers switch from Packet `0` lockstep to **Packet `240` (`DEADLINE_TIMELINE`)** over the Control RUDP socket (`Port`) so a single lagging player never freezes the rest of the match:
+
+- **Shared 14-byte header**: `[u16 sessionId][u8 240][u32 token][u16 phase][u32 ackOrHighest][u8 count]`, where `token = randomSeed % 2^32` and `phase` starts at `1` (incremented to `2`, etc., when transitioning into boss rooms such as Stage mode's boss phase).
+- **Client -> Server Proposals (`14 + count × 8` bytes, `count <= 16`)**: Carries `ackFrame = contiguousLocalFrame`, followed by `count × (u32 frame, u32 inputBitmask)` sampled `max(3, ceil(buffer / 2))` frames ahead and uploaded every `12ms`.
+- **Server -> Client Authoritative Batches (`14 + count × (4 + playerCount × 4)` bytes, `count <= 20`)**: Server commits frames at `60 Hz` up to `confirmLead = max(2, ceil(buffer / 3))` frames ahead; any player whose proposal missed the deadline receives neutral `0` (`0x00000000`). Broadcasts the latest `<= 8` frames (`200ms` heartbeat when idle) plus targeted `<= 20`-frame catch-up repair batches (`[ackFrame + 1 .. recent - 1]`) for recovering peers (retaining retired phase history for `18s`). Lagging clients automatically run at `1.5×` speed (`game_set_speed`) until queued frames drain cleanly.
 
 ### 7.5 Keepalives, Disconnects, Forfeits & Natural Round End (`Round 2`)
 
