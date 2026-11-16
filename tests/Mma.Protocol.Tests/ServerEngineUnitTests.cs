@@ -422,4 +422,33 @@ public sealed class ServerEngineUnitTests
         engine.HandleControlDatagram(p2Ep, BuildControl(6002, MmaPacketType.GotoLevel, new MatchReadyPacket(2, "rmWilyBoss").WritePayload));
         Assert.Equal(LobbyPhase.InMatch, engine.Phase);
     }
+
+    [Fact]
+    public void PartialLobbyReady_StartsMatchWhenAtLeastTwoConnectedPlayersAreAllReady()
+    {
+        var options = new ServerOptions(IPAddress.Loopback, 6520, 4, "Arena");
+        var engine = new MmaServerEngine(options, nextSessionId: () => 9101);
+        var p1Ep = new IPEndPoint(IPAddress.Loopback, 48001);
+        var p2Ep = new IPEndPoint(IPAddress.Loopback, 48003);
+
+        ConnectAndAck(engine, p1Ep, "P1", 1);
+
+        var p1OnlyReady = engine.HandleControlDatagram(p1Ep, BuildControl(9101, MmaPacketType.PlayerReady, new ClientReadyPacket(1).WritePayload));
+        var r1 = new GmlBufferReader(Assert.Single(p1OnlyReady).Payload);
+        _ = MmaPacketHeader.ReadFrom(r1);
+        Assert.False(ServerPlayerReadyPacket.ReadPayload(r1).AllReady);
+        Assert.Equal(LobbyPhase.Lobby, engine.Phase);
+
+        ConnectAndAck(engine, p2Ep, "P2", 2);
+        var p2Ready = engine.HandleControlDatagram(p2Ep, BuildControl(9101, MmaPacketType.PlayerReady, new ClientReadyPacket(2).WritePayload));
+        Assert.Equal(LobbyPhase.StartingMatch, engine.Phase);
+        Assert.Equal(2, engine.ConnectedPlayerCount);
+        foreach (var dgram in p2Ready)
+        {
+            var r = new GmlBufferReader(dgram.Payload);
+            var h = MmaPacketHeader.ReadFrom(r);
+            Assert.Equal(MmaPacketType.PlayerReady, h.KnownType);
+            Assert.True(ServerPlayerReadyPacket.ReadPayload(r).AllReady);
+        }
+    }
 }

@@ -580,7 +580,7 @@ public sealed class MmaServerEngine
         sender.Ready = true;
         sender.LastLobbyActivity = now;
 
-        bool allReady = _players.Count == _options.MaxPlayers && _players.All(p => p.Ready);
+        bool allReady = _players.Count >= MmaConstants.MinPlayers && _players.All(p => p.Ready);
         if (allReady && _modeConfig.Submode == MmaConstants.SubmodeTeams && !HasDistinctTeams())
         {
             allReady = false;
